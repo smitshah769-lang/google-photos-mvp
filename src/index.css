@@ -1,0 +1,77 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Google Sans', 'Google Sans Text', Inter, system-ui, sans-serif;
+
+  --color-gp-bg: #000000;
+  --color-gp-surface: #1e1f20;
+  --color-gp-surface-elevated: #282a2c;
+  --color-gp-border: #3c4043;
+  --color-gp-text: #e8eaed;
+  --color-gp-text-secondary: #9aa0a6;
+  --color-gp-accent: #8ab4f8;
+
+  --radius-gp-card: 16px;
+  --size-touch-min: 44px;
+}
+
+@layer base {
+  html {
+    overflow-x: hidden;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    background-color: var(--color-gp-bg);
+    color: var(--color-gp-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #root {
+    min-height: 100dvh;
+    overflow-x: hidden;
+  }
+}
+
+@utility touch-target {
+  min-width: var(--size-touch-min);
+  min-height: var(--size-touch-min);
+}
+
+@utility rounded-gp-card {
+  border-radius: var(--radius-gp-card);
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes success-pop {
+  0% {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
