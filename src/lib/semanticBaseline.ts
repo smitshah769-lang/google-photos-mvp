@@ -1,4 +1,5 @@
 import type { Photo } from '@/data/photos'
+import { visionSearchTerms } from '@/lib/photoVision'
 import { QUERY_SYNONYMS } from '@/data/synonyms'
 
 function tokenizeQuery(query: string): string[] {
@@ -48,6 +49,11 @@ function photoMatchesBaselineTerm(
   if (fieldIncludes(photo.objects, term)) return true
   if (fieldIncludes(photo.animals, term)) return true
   if (allowAlt && photo.alt.toLowerCase().includes(term)) return true
+  if (allowAlt) {
+    for (const blob of visionSearchTerms(photo.id)) {
+      if (blob.toLowerCase().includes(term)) return true
+    }
+  }
   if (
     allowAlt &&
     photo.kind === 'document' &&

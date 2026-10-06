@@ -1,8 +1,13 @@
-import type { Photo } from '@/data/photos'
+import type { Photo } from '../data/photos'
+import { visionSearchTerms } from './photoVision'
 
 /** Text blob embedded for semantic retrieval (index + query use the same format). */
 export function photoSearchText(photo: Photo): string {
   const parts: string[] = [photo.alt]
+
+  for (const term of visionSearchTerms(photo.id)) {
+    parts.push(term)
+  }
 
   if (photo.location) parts.push(photo.location)
   if (photo.setting) parts.push(photo.setting)

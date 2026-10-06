@@ -1,5 +1,6 @@
 import type { Photo } from '@/data/photos'
 import type { Attr } from '@/lib/attributes'
+import { visionSearchTerms } from '@/lib/photoVision'
 import { photoMatchesTimeline } from '@/lib/timeline'
 import {
   getPhotoAttributeValue,
@@ -21,6 +22,9 @@ function keywordMatchesPhoto(photo: Photo, keyword: string): boolean {
   if (photo.alt.toLowerCase().includes(needle)) return true
   if (photo.animals.some((a) => a.toLowerCase().includes(needle))) return true
   if (photo.objects.some((o) => o.toLowerCase().includes(needle))) return true
+  for (const blob of visionSearchTerms(photo.id)) {
+    if (blob.toLowerCase().includes(needle)) return true
+  }
   return false
 }
 

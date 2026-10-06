@@ -80,6 +80,11 @@ Use the exact Qwen slug from [Groq’s model list](https://console.groq.com/docs
    - Runtime: `POST /api/embed` embeds each query with the same Google model. Tag baseline still powers the **Without clarifier** chip; the search **pool** unions embedding hits with tag matches.
    - Commit `photo-embeddings.json` for Vercel. Set **`GEMINI_API_KEY`** in Vercel env for query embeds at runtime.
 
+   **Vision search tags (30 research-deck photos only, optional):**
+   - `npm run build:vision-tags` → `public/photo-vision.json` (does **not** edit `photos.ts`).
+   - Uses **`GEMINI_API_KEY`** or local **Ollama** (`VISION_PROVIDER=ollama`, `ollama pull moondream`).
+   - Then `npm run build:embeddings -- --force` so vectors include the extra search text.
+
 6. **Production-style serve**
    ```bash
    npm run build

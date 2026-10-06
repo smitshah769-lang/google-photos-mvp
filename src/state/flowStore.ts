@@ -53,6 +53,7 @@ import {
   type AnsweredMap,
 } from '@/lib/questionPicker'
 import { resolveSearchPool } from '@/lib/embeddingSearch'
+import { loadPhotoVisionSidecar } from '@/lib/photoVision'
 import { semanticBaselineCount } from '@/lib/semanticBaseline'
 import type { ClassifyResponse } from '@/lib/schemas'
 import { candidatesWithDraft, type RoundDraft } from '@/lib/roundPreview'
@@ -1144,6 +1145,7 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
 
         const notes: string[] = []
         if (consumeOfflineToast()) notes.push('Using offline mode')
+        await loadPhotoVisionSidecar()
         const baselineCount = semanticBaselineCount(query, library)
         const { pool } = await resolveSearchPool(query, library)
         const extracted = applyExtracted(outcome.data, pool, pool.length > 0)

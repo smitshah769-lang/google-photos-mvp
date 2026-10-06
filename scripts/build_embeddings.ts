@@ -16,6 +16,11 @@ import { isEmbedConfigured, resolveEmbedProvider } from '../server/embedConfig.t
 import { embedTextsUnified } from '../server/embeddingProvider.ts'
 import { libraryIdHash } from '../src/lib/embeddingIndex.ts'
 import type { EmbeddingIndex } from '../src/lib/embeddingIndex.ts'
+import {
+  parsePhotoVisionSidecar,
+  photoVisionSidecarHash,
+  setPhotoVisionSidecar,
+} from '../src/lib/photoVision.ts'
 import { photoSearchText } from '../src/lib/photoSearchText.ts'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -23,6 +28,7 @@ config({ path: path.join(ROOT, '.env') })
 
 const PHOTOS_TS = path.join(ROOT, 'src/data/photos.ts')
 const OUT = path.join(ROOT, 'public/photo-embeddings.json')
+const VISION_OUT = path.join(ROOT, 'public/photo-vision.json')
 const PHOTOS_MARKER = 'export const photos: Photo[] = '
 /** Groq OpenAI-style batch; Google uses smaller batches + pauses inside embedGoogle. */
 const BATCH_SIZE = 96
@@ -76,7 +82,18 @@ async function main() {
   const provider = resolveEmbedProvider()
   const photos = parsePhotosFile()
   const photoIds = photos.map((p) => p.id)
-  const hash = libraryIdHash(photoIds)
+
+  let visionSidecar = null
+  if (fs.existsSync(VISION_OUT)) {
+    try {
+      visionSidecar = parsePhotoVisionSidecar(JSON.parse(fs.readFileSync(VISION_OUT, 'utf8')))
+    } catch {
+      visionSidecar = null
+    }
+  }
+  setPhotoVisionSidecar(visionSidecar)
+
+  const hash = `${libraryIdHash(photoIds)}-${photoVisionSidecarHash(visionSidecar)}`
 
   const prev = existingIndex()
   if (!force && prev?.libraryIdHash === hash && prev.photoIds.length === photos.length) {

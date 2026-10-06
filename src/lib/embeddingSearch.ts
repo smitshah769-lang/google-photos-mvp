@@ -8,6 +8,7 @@ import {
 import type { EmbeddingIndex } from '@/lib/embeddingIndex'
 import { parseEmbeddingIndex } from '@/lib/embeddingIndex'
 import { cosineSimilarity, copyNormalized } from '@/lib/embeddingsMath'
+import { loadPhotoVisionSidecar } from '@/lib/photoVision'
 import { semanticBaseline } from '@/lib/semanticBaseline'
 
 let cachedIndex: EmbeddingIndex | null | undefined
@@ -109,6 +110,7 @@ export type SearchPoolResult = {
  * baselineCount for the UI chip stays semanticBaseline-only (see flowStore).
  */
 export async function resolveSearchPool(query: string, library: Photo[]): Promise<SearchPoolResult> {
+  await loadPhotoVisionSidecar()
   const tagPool = semanticBaseline(query, library)
   const index = await loadEmbeddingIndex()
   if (!index) {
