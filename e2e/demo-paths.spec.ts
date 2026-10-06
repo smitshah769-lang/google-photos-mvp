@@ -9,7 +9,7 @@ async function openQueryWithLake(page: Page) {
   await expect(page.getByTestId('home-recents-list')).toHaveCount(0)
   await page.getByTestId('query-input').fill('lake')
   await page.getByTestId('query-submit').click()
-  await expect(page.getByText('When was it?')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('When was the photo clicked?')).toBeVisible({ timeout: 20_000 })
 }
 
 async function submitRound(page: Page) {

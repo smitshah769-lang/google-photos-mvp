@@ -10,8 +10,10 @@
     "preview": "vite preview",
     "serve": "tsx server/index.ts",
     "build:library": "tsx scripts/build_library.ts",
+    "build:embeddings": "tsx scripts/build_embeddings.ts",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "export:screens": "playwright test e2e/export-screens.spec.ts --project=phone-390"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

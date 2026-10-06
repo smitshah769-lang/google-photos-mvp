@@ -3,9 +3,7 @@ import { AskPhotosHome } from '@/components/AskPhotosHome'
 import { ClassifyingScreen } from '@/components/ClassifyingScreen'
 import { ClarifierCard } from '@/components/ClarifierCard'
 import { FallbackScreen } from '@/components/FallbackScreen'
-import { PhotoViewer } from '@/components/PhotoViewer'
 import { ResultsGrid } from '@/components/ResultsGrid'
-import { SuccessScreen } from '@/components/SuccessScreen'
 import { Toast } from '@/components/Toast'
 import { useFlowStore } from '@/state/flowStore'
 
@@ -51,13 +49,7 @@ export function FlowApp() {
       {stage === 'LEVEL1' || stage === 'LEVEL2' || stage === 'LEVEL3' || stage === 'LOOPBACK' ? (
         <ClarifierCard />
       ) : null}
-      {stage === 'RESULTS' || stage === 'VIEWER' ? (
-        <>
-          <ResultsGrid hidden={stage === 'VIEWER'} />
-          {stage === 'VIEWER' ? <PhotoViewer /> : null}
-        </>
-      ) : null}
-      {stage === 'SUCCESS' ? <SuccessScreen /> : null}
+      {stage === 'RESULTS' ? <ResultsGrid /> : null}
       {stage === 'FALLBACK' ? <FallbackScreen /> : null}
     </div>
   )

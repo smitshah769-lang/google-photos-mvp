@@ -3,6 +3,7 @@ import { LoopBackCard } from '@/components/LoopBackCard'
 import { TopBar } from '@/components/TopBar'
 import { BottomSheet } from '@/components/BottomSheet'
 import { ClarifierLoadingOverlay } from '@/components/ClarifierLoadingOverlay'
+import { EARLY_STOP_AT } from '@/config'
 import { formatOptionLabel } from '@/lib/profileDisplay'
 import { optionWouldMatch, previewCount } from '@/lib/roundPreview'
 import { useFlowStore, type RoundQuestion } from '@/state/flowStore'
@@ -106,11 +107,14 @@ export function ClarifierCard() {
 
   const submitRound = useFlowStore((s) => s.submitRound)
   const showResultsNow = useFlowStore((s) => s.showResultsNow)
+  const notFound = useFlowStore((s) => s.notFound)
+  const loopBusy = useFlowStore((s) => s.loopBusy)
   const resolvePendingKeyword = useFlowStore((s) => s.resolvePendingKeyword)
 
-  const disabled = cardLoading || Boolean(pendingKeyword)
+  const disabled = Boolean(pendingKeyword)
   const preview = previewCount(pool, profile, keywords, candidates, roundDraft)
   const showPhotoCta = level >= 2
+  const showNotFound = candidates.length > EARLY_STOP_AT
   const photoLabel =
     preview === 1 ? 'Show 1 photo' : preview === 0 ? 'Show results' : `Show ${preview} photos`
   const loadingMessage =
@@ -156,7 +160,7 @@ export function ClarifierCard() {
       <div className="shrink-0 px-4 pb-6 pt-2">
         <button
           type="button"
-          disabled={disabled || cardLoading}
+          disabled={disabled}
           data-testid="submit-round"
           onClick={() => void submitRound()}
           className="w-full rounded-full bg-gp-accent py-3.5 text-base font-medium text-[#0b1d35] disabled:opacity-40"
@@ -167,6 +171,17 @@ export function ClarifierCard() {
           <p className="mt-2 text-center text-xs text-gp-text-secondary" data-testid="match-count">
             {preview} photo{preview === 1 ? '' : 's'} match
           </p>
+        ) : null}
+        {showNotFound ? (
+          <button
+            type="button"
+            disabled={disabled || loopBusy}
+            data-testid="not-found-photo"
+            onClick={() => void notFound()}
+            className="mt-3 w-full rounded-full border border-gp-border bg-gp-surface-elevated py-3.5 text-base font-medium text-gp-text shadow-sm ring-1 ring-gp-border/80 transition-opacity disabled:opacity-50"
+          >
+            {loopBusy ? 'Loading…' : 'I did not find the photo'}
+          </button>
         ) : null}
       </div>
 

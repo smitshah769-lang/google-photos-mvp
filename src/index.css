@@ -54,15 +54,36 @@
   }
 }
 
-@keyframes success-pop {
-  0% {
-    transform: scale(0.85);
-    opacity: 0;
+@keyframes chip-outline-spin {
+  to {
+    transform: rotate(360deg);
   }
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
+}
+
+@utility chip-moving-outline {
+  position: relative;
+  isolation: isolate;
+  padding: 1.5px;
+  overflow: hidden;
+}
+
+.chip-moving-outline::before {
+  content: '';
+  position: absolute;
+  inset: -120%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 260deg,
+    var(--color-gp-accent) 280deg,
+    #c2d7fc 300deg,
+    transparent 320deg 360deg
+  );
+  animation: chip-outline-spin 2.8s linear infinite;
+}
+
+.chip-moving-outline > button {
+  position: relative;
+  z-index: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {

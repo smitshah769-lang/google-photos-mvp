@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
+import { handleEmbedApi } from './embedHandler.ts'
 import { handleLlmApi } from './handler.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -55,6 +56,10 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
 }
 
 const server = http.createServer((req, res) => {
+  if (req.url?.startsWith('/api/embed')) {
+    void handleEmbedApi(req, res)
+    return
+  }
   if (req.url?.startsWith('/api/llm')) {
     void handleLlmApi(req, res)
     return

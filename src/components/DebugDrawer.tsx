@@ -21,8 +21,6 @@ const STAGE_LABEL: Partial<Record<Stage, string>> = {
   LEVEL3: 'Level 3',
   SEARCHING: 'Searching',
   RESULTS: 'Results',
-  VIEWER: 'Viewer',
-  SUCCESS: 'Success',
   LOOPBACK: 'Loop-back',
   FALLBACK: 'Fallback',
 }

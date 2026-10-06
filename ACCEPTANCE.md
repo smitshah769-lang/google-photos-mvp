@@ -19,7 +19,7 @@ Use with mock LLM (`VITE_USE_MOCK_LLM=true`) unless noted. Automated coverage: `
 | 13 | Year selection includes Y±1 crawl | Unit timeline |
 | 14 | Results: real / gradient / document cards + comparison chip | E2E path A |
 | 15 | “I did not find the photo” → loop-back L2 | E2E path B |
-| 16 | After 2 loop-backs → fallback screen | Unit E-9.5 |
+| 16 | After LOOP_LIMIT loop-back(s) → next not-found shows fallback (shipped LOOP_LIMIT=1) | Unit E-9.5 |
 | 17 | Debug: class, profile, history, Reset → home | E2E reset |
 | 18 | 390×844, no horizontal scroll; 320px scaled frame | E2E narrow project |
 
@@ -31,4 +31,4 @@ Use with mock LLM (`VITE_USE_MOCK_LLM=true`) unless noted. Automated coverage: `
 | B | lake → Last week → Whistler → not found → loop-back | Path B (partial) |
 | C | friends / beach / receipt class ladders | Path C tests |
 
-**Optional live:** one path A run with real `LLM_API_KEY`; debug drawer should show latency and non-fallback Call 1 when within 6s.
+**Optional live:** path A with `LLM_API_KEY` + embeddings (`GEMINI_API_KEY`, `photo-embeddings.json`); debug shows latency and non-fallback when within timeout.

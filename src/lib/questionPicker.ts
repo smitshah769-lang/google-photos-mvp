@@ -1,6 +1,10 @@
 import type { Photo } from '@/data/photos'
 import type { Attr, QueryClass } from '@/lib/attributes'
-import { allowedAttributes, level1OrderIndex } from '@/lib/attributes'
+import {
+  allowedAttributes,
+  attributeRankIndex,
+  loopBackAttributePool,
+} from '@/lib/attributes'
 import {
   attributeStats,
   hasSplittableAttribute,
@@ -38,14 +42,14 @@ export function fallbackPickNext(
     .map((a) => ({
       attr: a,
       entropy: stats[a]?.entropy ?? 0,
-      l1: level1OrderIndex(queryClass, a),
+      rank: attributeRankIndex(queryClass, a),
     }))
 
   if (scored.length === 0) return null
 
   scored.sort((x, y) => {
     if (y.entropy !== x.entropy) return y.entropy - x.entropy
-    if (x.l1 !== y.l1) return x.l1 - y.l1
+    if (x.rank !== y.rank) return x.rank - y.rank
     return x.attr.localeCompare(y.attr)
   })
 
@@ -82,9 +86,9 @@ export function compareAttributePriority(
   queryClass: QueryClass,
 ): number {
   if (entropyB !== entropyA) return entropyB - entropyA
-  const l1a = level1OrderIndex(queryClass, a)
-  const l1b = level1OrderIndex(queryClass, b)
-  if (l1a !== l1b) return l1a - l1b
+  const ra = attributeRankIndex(queryClass, a)
+  const rb = attributeRankIndex(queryClass, b)
+  if (ra !== rb) return ra - rb
   return a.localeCompare(b)
 }
 
@@ -96,15 +100,19 @@ export function getStatsForAllowed(
   return attributeStats(candidates, allowedAttributes(queryClass, level))
 }
 
-/** FR-12 / E-9.7: loop-back uses level 2 if any unused L2 attrs, else level 3. Never re-opens "can't remember" here. */
+export function getStatsForPool(candidates: Photo[], pool: Attr[]): AttributeStatsMap {
+  return attributeStats(candidates, pool)
+}
+
+/** FR-12 / E-9.7: loop-back picks from L2∪L3; UI level follows the attribute tier. */
 export function pickLoopBackLevel(
   candidates: Photo[],
   answered: AnsweredMap,
   queryClass: QueryClass,
 ): 2 | 3 | null {
-  for (const level of [2, 3] as const) {
-    const allowed = allowedAttributes(queryClass, level)
-    if (fallbackPickNext(candidates, answered, allowed, queryClass)) return level
-  }
-  return null
+  const pool = loopBackAttributePool(queryClass)
+  const attr = fallbackPickNext(candidates, answered, pool, queryClass)
+  if (!attr) return null
+  if (allowedAttributes(queryClass, 2).includes(attr)) return 2
+  return 3
 }

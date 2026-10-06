@@ -32,7 +32,8 @@ export function PhoneFrame({ children }: PhoneFrameProps) {
         style={{ width: outerWidth, height: outerHeight }}
       >
         <div
-          className="absolute left-0 top-0 overflow-hidden rounded-[2rem] border border-gp-border bg-gp-surface shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
+          data-testid="phone-frame"
+          className="absolute left-0 top-0 overflow-hidden rounded-[2rem] border-2 border-[#5f6368] bg-gp-surface shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-white/10"
           style={{
             width: PHONE_WIDTH,
             height: PHONE_HEIGHT,
@@ -41,6 +42,12 @@ export function PhoneFrame({ children }: PhoneFrameProps) {
           }}
         >
           <div className="flex h-full w-full flex-col">{children}</div>
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-2.5 z-30 flex justify-center"
+            aria-hidden
+          >
+            <div className="h-1 w-[134px] rounded-full bg-white/45 shadow-[0_0_12px_rgba(255,255,255,0.15)]" />
+          </div>
         </div>
       </div>
     </div>

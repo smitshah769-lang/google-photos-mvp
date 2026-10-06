@@ -11,9 +11,10 @@ The Intent Clarifier sits inside **Ask Photos** and turns a vague query into a *
 
 | Constraint | Implication |
 |---|---|
-| 430-entry mock library (`photos.ts`) | All filters, stats, and baselines are computed client-side |
+| 430-entry mock library (`photos.ts`) | Filters and stats run client-side on **`pool`** (tag baseline ∪ embeddings, capped) |
 | ~400 JPEGs from Unsplash (build-time) | `npm run build:library` + `UNSPLASH_ACCESS_KEY`; runtime app reads local `/public/photos` only |
-| API keys never in browser | LLM: `POST /api/llm`. Unsplash key used only by the library build script |
+| Optional vectors | `public/photo-embeddings.json` from `npm run build:embeddings`; query vectors via `POST /api/embed` |
+| API keys never in browser | LLM: `POST /api/llm`. Embed: `POST /api/embed`. Unsplash key build-time only |
 | Demo must work offline | Mock mode + rule-based fallbacks (`VITE_USE_MOCK_LLM`, E-10.1) |
 | Grounding rule (PRD 6.6) | MCQ options only from `attributeStats`; invented values dropped (E-10.6) |
 
@@ -26,31 +27,41 @@ The Intent Clarifier sits inside **Ask Photos** and turns a vague query into a *
 ```mermaid
 flowchart TB
   subgraph Client["Browser (Vite + React)"]
-    UI["Screens S1–S9 + Debug drawer"]
+    UI["Screens + Debug drawer"]
     FS["flowStore (state machine)"]
     FE["filterEngine"]
+    ES["embeddingSearch / semanticBaseline"]
     AS["attributeStats / questionPicker"]
     LC["llmClient"]
     FB["fallbackClassifier + templates"]
     UI --> FS
     FS --> FE
+    FS --> ES
     FS --> AS
     FS --> LC
     FS --> FB
+    ES --> FE
     LC --> FE
     FB --> FE
   end
 
   subgraph Server["Thin proxy"]
-    API["POST /api/llm"]
-    LLM["server/llm.ts + prompts.ts"]
-    API --> LLM
+    LLMAPI["POST /api/llm"]
+    EMBAPI["POST /api/embed"]
+    LLM["handler + llm.ts + prompts.ts"]
+    EMB["embedHandler + embeddingProvider"]
+    LLMAPI --> LLM
+    EMBAPI --> EMB
   end
 
-  DATA["src/data/photos.ts + public/photos (430 entries, built locally)"]
+  DATA["photos.ts + public/photos"]
+  VEC["photo-embeddings.json"]
   FE --> DATA
   AS --> DATA
-  LC -->|fetch JSON| API
+  ES --> DATA
+  ES --> VEC
+  LC -->|fetch JSON| LLMAPI
+  ES -->|query vector| EMBAPI
 ```
 
 **Separation of concerns**
@@ -71,8 +82,8 @@ flowchart TB
 ┌─────────────────────────────────────────────────────────────┐
 │  Desktop: PhoneFrame (390×844) + DebugDrawer (docked)       │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │  React tree: Home → Query → Classify → Clarifier →   │   │
-│  │  Results → Viewer / Success / Loop-back / Fallback   │   │
+│  │  React tree: Home → Classify (+ pool) → Clarifier →   │   │
+│  │  Searching → Results → Loop-back / Fallback           │   │
 │  └─────────────────────────────────────────────────────┘   │
 │         │                    │                              │
 │         ▼                    ▼                              │
@@ -86,7 +97,7 @@ flowchart TB
 ```
 
 - **Development:** Vite dev server serves the SPA and mounts proxy middleware (or companion Express on another port—one integration path only).
-- **Production demo:** Same split: static assets + small Node handler for `/api/llm`.
+- **Production demo:** Static assets + Node handler for `/api/llm` and `/api/embed` (`npm run serve`).
 - **No persistence:** Refresh resets flow (E-12.1). LLM response cache may survive in memory until reset (E-10.9).
 
 ---
@@ -96,11 +107,12 @@ flowchart TB
 Canonical stages from PRD §8.5, aligned with screens §7:
 
 ```
-HOME → QUERY → CLASSIFYING → LEVEL1 → LEVEL2 → LEVEL3 → SEARCHING → RESULTS
-                                                      ↓
-                    SUCCESS ← Photo viewer
-                    LOOPBACK → LEVEL2 (re-weight, relax filters)
-                    FALLBACK (after 2 loop-backs, FR-13)
+HOME → CLASSIFYING → LEVEL1 → LEVEL2 → LEVEL3 → SEARCHING → RESULTS
+         │              ↑                    LOOPBACK (banner + new round)
+         │              └──── pickLoopBackLevel (L2 or L3), may relax filters
+         └── resolveSearchPool → apply Call 1 extracted on pool
+RESULTS ──not found──► LOOPBACK …  (loopCount ≥ LOOP_LIMIT → FALLBACK)
+Success = user finds photo in grid (no viewer stage)
 ```
 
 **Core state** (`FlowState`):
@@ -110,7 +122,9 @@ HOME → QUERY → CLASSIFYING → LEVEL1 → LEVEL2 → LEVEL3 → SEARCHING �
 | `stage` | Current screen / transition guard |
 | `query`, `queryClass` | Raw text + one of `people \| nonPeople \| both \| text` |
 | `profile` | `Partial<Record<Attr, value \| 'any'>>` (`'any'` = Can't remember) |
-| `candidates` | Current photo set (derived, recomputed on every profile change) |
+| `pool` | Initial search slice (semanticBaseline ∪ embedding hits) |
+| `candidates` | Filtered subset of `pool` for current profile + keywords |
+| `baselineCount` | Tag-only baseline for comparison chip |
 | `candidateHistory` | Count trail for debug and demo chip |
 | `loopCount` | Loop-back limit (E-9.5) |
 | `questionsThisRound` | Cap at 3 per round (FR-10, E-7.7) |
@@ -120,7 +134,7 @@ HOME → QUERY → CLASSIFYING → LEVEL1 → LEVEL2 → LEVEL3 → SEARCHING �
 
 | Event | Action |
 |---|---|
-| Query submit | Call 1 → apply `extracted` to profile → baseline candidates |
+| Query submit | Call 1 + `resolveSearchPool` → apply `extracted` on `pool` → set `baselineCount` |
 | Option tap / typed submit | Update profile → recompute candidates → early stop or next question |
 | `candidates ≤ EARLY_STOP_AT` | Skip to search (E-7.3) |
 | After level 2, `candidates > THIRD_LEVEL_ABOVE` | Enter level 3 (FR-11) |
@@ -169,9 +183,10 @@ Human-only filters (`peopleCount`, pose) apply only when candidates include huma
 - **Keywords:** Substring match on `objects`, `animals`, `alt` (E-5.3); zero-match keywords need user confirm (E-5.4).
 - **People class + pets:** Baseline and profile filters for `people` queries must include animal-tagged entries when the query or extracted profile names a pet (E-11.5); do not require `hasPeople === true`.
 
-### 6.2 `semanticBaseline(query)`
+### 6.2 `semanticBaseline(query)` and `embeddingSearch`
 
-Loose match for the "Without clarifier" chip (PRD §6.4): query tokens + synonym map against tags/`alt`. Computed independently of the profile.
+- **`semanticBaseline`:** loose tag/synonym match for the **comparison chip** and as one input to the pool.
+- **`resolveSearchPool`:** union embedding top-K (when index + `/api/embed` succeed) with baseline; cap `EMBED_POOL_CAP`. Clarifier MCQs and `filterEngine` use **`pool`**, not always the full library.
 
 ### 6.3 `attributeStats` + `questionPicker`
 
@@ -216,11 +231,11 @@ All responses: **strict JSON**, validated with Zod; retry once; then fallback (E
 
 | Step | Behaviour |
 |---|---|
-| **Call 1** | Wait up to **6 s** for LLM; LLM result within 6 s **wins** over interim fallback (E-2.12). After 6 s, use `fallbackClassifier` and discard late Call 1. |
-| **Call 2** | Skeleton UI; fallback template + entropy pick if slow/failed (E-10.12: &gt; 3 s → fallback for question step). |
+| **Call 1** | Wait up to **`CALL1_TIMEOUT_MS`** (20 s shipped); LLM within window wins (E-2.12). Then `fallbackClassifier`. |
+| **Call 2** | Skeleton/overlay; fallback at **`CALL2_TIMEOUT_MS`** (25 s shipped) or failure (E-10.12). |
 | **Call 3** | On failure, treat raw text as keyword pill; never block flow (E-5.11). |
 
-PRD §6.5 still mentions 4 s for Call 1; **implement per `edge cases.md` §14 (6 s, LLM priority).**
+Shipped timeouts live in **`src/config.ts`** (20 s / 25 s); LLM priority within window (E-2.12).
 
 ### 7.4 Mock and degraded mode
 
@@ -246,14 +261,14 @@ Parse helpers: strip markdown fences, extract first JSON object (E-10.13).
 
 | Screen | Component(s) | Notes |
 |---|---|---|
-| S1 | `AskPhotosHome`, `SearchBar`, entry chip in `TopBar` | Query typed on home; no `QueryInput` screen |
-| S2 | Classifying shimmer | Call 1 in flight; slow hint at 3 s |
-| S3 | `ClarifierCard`, `TypedAnswerInput`, `roundPreview` | Up to 3 questions per round; draft + **submitRound**; Skip → results; no `ProfilePills` on clarifier |
-| S4 | `ResultsGrid`, `ProfilePills` | Results + comparison chip |
-| S5 | `ResultsGrid` | Real / gradient / document renderers (PRD §8.4) |
-| S6–S7 | `PhotoViewer`, `SuccessScreen` | Baseline comparison chip |
-| S8–S9 | `LoopBackCard`, fallback | Copy per FR-12/13 |
-| Debug | `DebugDrawer` | Class, history, force-class, raw LLM, latency, reset |
+| S1 | `AskPhotosHome`, `SearchBar`, entry chip in `TopBar` | Query on home only |
+| S2 | `ClassifyingScreen` | Call 1 + pool build; slow hint at 3 s |
+| S3 | `ClarifierCard`, `TypedAnswerInput`, `LoopBackCard` | Multi-question rounds; Skip; not-found when > 12 |
+| S4 | `ClassifyingScreen` (search message) → `ResultsGrid` | Grid + `ProfilePills` + comparison chip |
+| S5 | `FallbackScreen` | After `LOOP_LIMIT` |
+| Debug | `DebugDrawer` | Stage, pool/candidates, force-class, LLM log, reset |
+
+**Not shipped:** `PhotoViewer`, `SuccessScreen`, standalone `QueryInput` route.
 
 **Layout:** `PhoneFrame` 390×844; scale down on narrow viewports (E-12.4). Debug drawer must not block frame taps (E-12.6).
 
@@ -275,7 +290,7 @@ Regenerate via **`npm run build:library`** when changing metadata rules; do not 
 
 | Slice | Rendering |
 |---|---|
-| `kind: 'photo'`, non-null `src` | Image grid + viewer aspect from `width`/`height` |
+| `kind: 'photo'`, non-null `src` | Image grid (`PhotoCard`, square crop) |
 | `kind: 'photo'`, `src: null` (legacy generated) | Gradient + emoji + `alt` |
 | `kind: 'document'` | Paper card, `docType` only (E-11.4) |
 
@@ -287,7 +302,7 @@ Demo anchor: designated lake demo id (**legacy p10**): lily pads, Vancouver Isla
 
 ### 10.1 Security
 
-- `LLM_API_KEY` only on server; never `VITE_*` (E-10.10).
+- `LLM_API_KEY`, `GEMINI_API_KEY` (embed) only on server; never `VITE_*` (E-10.10).
 - `UNSPLASH_ACCESS_KEY` only for **`build:library`** (Node script / CI secret); never `VITE_*` and not required in production static hosting if assets are committed.
 - Typed text is data, not instruction injection—schema-bound outputs only (E-5.8).
 - Avoid logging full PII from typed answers outside debug (E-5.9).
@@ -321,26 +336,34 @@ src/
     attributeStats.ts
     questionPicker.ts
     semanticBaseline.ts
+    embeddingSearch.ts
+    embeddingIndex.ts
+    embeddingsMath.ts
+    photoSearchText.ts
   state/
     flowStore.ts
   components/
     PhoneFrame.tsx
     AskPhotosHome.tsx
-    QueryInput.tsx
     ClarifierCard.tsx
-    TypedAnswerInput.tsx
-    ProfilePills.tsx
+    ClassifyingScreen.tsx
     ResultsGrid.tsx
-    PhotoViewer.tsx
-    SuccessScreen.tsx
+    PhotoCard.tsx
     LoopBackCard.tsx
+    FallbackScreen.tsx
     DebugDrawer.tsx
 server/
   index.ts
+  handler.ts
+  embedHandler.ts
+  embeddingProvider.ts
   llm.ts
   prompts.ts
 scripts/
-  build_library.ts          # Unsplash fetch + photos.ts (build-time)
+  build_library.ts
+  build_embeddings.ts
+public/
+  photo-embeddings.json
 ```
 
 ---
@@ -355,7 +378,7 @@ scripts/
 
 ---
 
-## 13. Testing strategy (from edge §13)
+## 13. Testing strategy (from edge §14)
 
 | Area | Tests |
 |---|---|
@@ -363,6 +386,7 @@ scripts/
 | `attributeStats` / `questionPicker` | Skip single-value, entropy ties |
 | `flowStore` | 12 vs 13, 3-question cap, loop limit |
 | `llmClient` | Mock proxy: invalid JSON, timeout, stale `requestId` |
+| `embeddingSearch` | Pool union, fallback when index missing |
 | Data integrity | 430 ids, photo `src` files load, baseline counts |
 | E2E | PRD demo paths A–C |
 
@@ -374,7 +398,7 @@ scripts/
 |---|---|---|
 | Early stop at 12 | FR-10 | E-7.3, E-7.4 |
 | Third level &gt; 30 | FR-11 | E-7.8, E-7.9 |
-| Call 1 timeout | §6.5 says 4 s | **6 s, LLM priority** (E-2.12, §14) |
+| Call 1 timeout | PRD historically 4–6 s | **`CALL1_TIMEOUT_MS` = 20 s** (E-2.12) |
 | Animal photos under People | §8.4 `animals[]` | E-2.5, E-2.6, E-2.13, E-11.5 — class **`people`**, not `nonPeople` |
 | Zero-result filters | Grounding | E-7.2, E-3.3, E-5.4 |
 | Loop-back | FR-12, FR-13 | E-9.x |

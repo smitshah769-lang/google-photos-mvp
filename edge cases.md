@@ -37,7 +37,7 @@
 | E-2.9 | Query that matches nothing in the library ("elephant", "xyzzy") | Classify normally, then see E-7.1 (zero results). | P0 |
 | E-2.10 | LLM returns a class outside the enum | Treat as invalid output: retry once, then fall back to the rule-based classifier. | P0 |
 | E-2.11 | "Force class" dropdown used in the debug drawer mid-flow | Reset the profile and restart first-level questions for the forced class. Log the override. | P1 |
-| E-2.12 | Classification slower than 6 s | **Give priority to the LLM:** wait up to 6 s before applying the fallback classifier. If the LLM result arrives within 6 s, use it (replace any interim fallback). Log latency and fallback use in the debug drawer. After 6 s with no LLM, use fallback and **ignore** later LLM results for that step. | P0 |
+| E-2.12 | Classification slower than timeout | **Give priority to the LLM:** wait up to **`CALL1_TIMEOUT_MS`** (shipped default **20 s**) before applying the fallback classifier. If the LLM result arrives in time, use it. After timeout with no LLM, use fallback and **ignore** late Call 1 for that request. Slow hint at 3 s on classify screen. | P0 |
 
 ## 3. Already-understood attributes (FR-1)
 
@@ -106,7 +106,7 @@
 
 | ID | Scenario | Expected behaviour | Pri |
 |---|---|---|---|
-| E-7.1 | Zero results at the baseline (query matches nothing) | Skip the clarifier. Show an empty state: "No photos matched 'elephant'." with **Start over** and **Browse by Places** (non-functional). | P0 |
+| E-7.1 | Zero results in the **search pool** (tag baseline and embeddings both empty) | Skip the clarifier. Show empty state: "No photos matched '…'." with **Start over** and disabled **Browse by Places**. | P0 |
 | E-7.2 | An answer drops the candidates to 0 | Should not happen given the grounding rule. If it does (typed or extracted filters), undo that filter, show a toast, and keep the previous candidate set. | P0 |
 | E-7.3 | Candidates are exactly 12 | Early stop → search. | P0 |
 | E-7.4 | Candidates are exactly 13 | Continue asking. | P0 |
@@ -126,11 +126,11 @@
 | E-8.1 | Results mix real photos, gradient placeholders, and document cards | Render each by its own rule (8.4). The grid keeps equal-size cells. | P0 |
 | E-8.2 | The target is a real photo (p10) among placeholders | It must be visually identifiable and sorted among the best matches (FR: best match first, then recency). | P0 |
 | E-8.3 | A real image fails to load | Fall back to a gradient card with the `alt` caption. Don't show a broken-image icon. | P0 |
-| E-8.4 | Baseline count vs "with clarifier" count | Baseline = `semanticBaseline(query)`; with clarifier = the final candidate count. If the final count > baseline (possible after typed keywords), show only "N results" without the comparison. | P1 |
+| E-8.4 | Baseline count vs "with clarifier" count | Baseline = **`semanticBaseline(query)` only** (not the embedding-augmented pool). With clarifier = final candidate count. If final count > baseline, show only "N results". | P1 |
 | E-8.5 | Very small results (1 to 2) | Header "2 photos match"; do not show an "empty" feel. | P1 |
 | E-8.6 | Large results (> 50) | Keep scrollable; no pagination required. Consider lazy rendering. | P2 |
-| E-8.7 | The user opens a photo and goes back | The results grid keeps its scroll position and the profile pills. | P1 |
-| E-8.8 | The user taps "This is it" on a placeholder | Same success flow. The prototype can't tell which photo was "right". | P1 |
+| E-8.7 | The user scrolls the results grid and continues | No in-app viewer; scroll position is ordinary list behaviour. *(Viewer removed from shipped UI.)* | P2 |
+| E-8.8 | Success | User identifies the target in the **results grid**; there is no **This is it** screen. | P0 |
 | E-8.9 | Removing a profile pill (nice-to-have) | Re-run the search with that filter removed; update the count. Cannot remove the last pill (the query itself). | P2 |
 | E-8.10 | Sort ties | Break by date descending, then id, for repeatable ordering. | P1 |
 
@@ -142,7 +142,7 @@
 | E-9.2 | Not found, results ≥ 3 | Don't relax. Ask a new attribute not yet used, from the second level. | P0 |
 | E-9.3 | Not found, zero results shown | Relax the strictest filter first; if still zero, drop the last two filters. | P1 |
 | E-9.4 | Not found, but no unused attributes remain | Go to the fallback card (FR-13) early with **Start over**. | P0 |
-| E-9.5 | Third not-found (after 2 loop-backs) | Fallback card: "Still not found? Browse by Places" and "Start over" (FR-13). | P0 |
+| E-9.5 | Second not-found after **`LOOP_LIMIT`** completed loop-back(s) (shipped **`LOOP_LIMIT = 1`**) | Fallback card: "Still not found?", disabled Browse by Places, **Start over** (FR-13). | P0 |
 | E-9.6 | The tap on "I did not find the photo" is repeated quickly | Count one loop only. | P0 |
 | E-9.7 | The loop-back asks the same question the user already answered | Never. Already answered attributes are excluded (including "Can't remember" ones, unless the user asked to retry them *(proposed: allow re-asking those once)*). | P0 |
 | E-9.8 | After a loop-back, results are identical to the previous results | Ask one more question automatically before showing the same set again. | P1 |
@@ -164,7 +164,7 @@
 | E-10.9 | The same `(class, profile, level)` is requested twice | Use the cache (6.6). Cache is cleared when "Force class" or the data changes. | P1 |
 | E-10.10 | The API key leaks to the browser (misconfiguration) | Never read the key on the client. The proxy only exposes `/api/llm`. The key must not be in `VITE_*` env vars. | P0 |
 | E-10.11 | The request is cancelled (the user navigates away) | Abort the in-flight fetch with `AbortController`. | P1 |
-| E-10.12 | The LLM is slow (> 4 s for Call 1, > 3 s for Call 2) | Show the skeleton; at the timeout, use the fallback. Record the latency in the debug drawer. | P0 |
+| E-10.12 | The LLM is slow (Call 1 / Call 2 exceed **`CALL1_TIMEOUT_MS`** / **`CALL2_TIMEOUT_MS`**) | Show skeleton/overlay; at timeout, use fallback. Record latency in the debug drawer. Shipped defaults: 20 s / 25 s. | P0 |
 | E-10.13 | The model returns text outside the JSON (code fences, preface) | Strip fences and extract the first JSON object; if still invalid, E-10.4. | P1 |
 | E-10.14 | The provider or model is changed in `.env` | No code change outside `server/llm.ts`. | P2 |
 
@@ -195,11 +195,21 @@
 | E-12.7 | `prefers-reduced-motion` | Disable the slide/count-up animations; use instant transitions. | P2 |
 | E-12.8 | Screen reader and keyboard | Options are buttons with labels; focus moves to the question title when a new card appears; "Can't remember" is reachable by Tab. | P2 |
 | E-12.9 | Touch target size | All chips and buttons ≥ 44 × 44 px. | P1 |
-| E-12.10 | Success then "Start over" | Resets everything, including the loop count and profile pills. | P0 |
+| E-12.10 | Results or fallback **Start over** / debug Reset | Clears query, profile, loop count, pool; returns to home. | P0 |
+
+## 13. Semantic embeddings *(shipped)*
+
+| ID | Scenario | Expected behaviour | Pri |
+|---|---|---|---|
+| E-13.1 | `photo-embeddings.json` missing or corrupt | Pool = tag baseline only; flow unchanged. | P0 |
+| E-13.2 | `/api/embed` fails (no key, timeout) | Same as E-13.1 for that query. | P0 |
+| E-13.3 | Vague query ("scenic mountains") | Embedding hits can enlarge **pool** vs tags alone; MCQs still grounded on **candidates** within pool. | P1 |
+| E-13.4 | Dimension mismatch (index vs query vector) | Ignore embeddings; use tag baseline. | P0 |
+| E-13.5 | Tight tag baseline ("lake" ~73) | Do **not** widen pool to full library (unlike tiny baseline demo widen for path A). | P1 |
 
 ---
 
-## 13. Suggested automated tests
+## 14. Suggested automated tests
 
 Cover the deterministic code first (these need no LLM):
 
@@ -209,9 +219,9 @@ Cover the deterministic code first (these need no LLM):
 4. Flow store: early stop at 12 vs 13 (E-7.3, E-7.4); 3-question cap (E-7.7); loop limits (E-9.5).
 5. `llmClient` with a mocked proxy: invalid JSON, timeout, stale response (E-10.4, E-10.7, E-10.12).
 6. Library integrity: 430 unique ids; 30 real photos load; test queries in 8.4 return the expected counts.
-7. End-to-end (Playwright or similar) for Demo Paths A, B and C in the PRD.
+7. `embeddingSearch` / `embeddingsMath` unit tests; end-to-end paths A–C (Playwright).
 
-## 14. Decisions to confirm
+## 15. Decisions to confirm
 
 These are the *(proposed)* defaults above that change the user experience. Change them in the PRD if you disagree:
 
@@ -219,5 +229,7 @@ These are the *(proposed)* defaults above that change the user experience. Chang
 - A filter that would drop candidates to 0 is **undone** with a toast (E-7.2, E-3.3).
 - "Can't remember" answers can be re-asked **once** during a loop-back (E-9.7).
 - A bare year or an older year uses the ±1 year crawl even when the year has no entries (E-6.4).
-- Call 1 waits **6 s** for the LLM; within that window the LLM **wins** over fallback; after 6 s, fallback is used and late LLM is discarded (E-2.12).
+- Call 1 waits **`CALL1_TIMEOUT_MS`** (shipped **20 s**) for the LLM; within that window the LLM **wins** over fallback (E-2.12).
+- **`LOOP_LIMIT = 1`**: one loop-back round, then fallback on the next not-found (E-9.5).
+- Comparison chip baseline is **tag-only**; pool may include embeddings (E-8.4, E-13.5).
 - **Animal / pet queries** use class **`people`**, not `nonPeople` (E-2.5, E-2.13, E-11.5). Rule-based fallback should map common animal terms to `people` when the LLM is unavailable.

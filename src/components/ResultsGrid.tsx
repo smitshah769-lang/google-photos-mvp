@@ -1,4 +1,3 @@
-import { useLayoutEffect, useRef } from 'react'
 import { PhotoCard } from '@/components/PhotoCard'
 import { ProfilePills } from '@/components/ProfilePills'
 import { TopBar } from '@/components/TopBar'
@@ -24,28 +23,13 @@ function ComparisonChip() {
   )
 }
 
-type ResultsGridProps = {
-  /** Keep mounted under the viewer so scroll position is preserved (E-8.7). */
-  hidden?: boolean
-}
-
-export function ResultsGrid({ hidden = false }: ResultsGridProps) {
+export function ResultsGrid() {
   const query = useFlowStore((s) => s.query)
   const candidates = useFlowStore((s) => s.candidates)
   const baselineCount = useFlowStore((s) => s.baselineCount)
-  const resultsScrollTop = useFlowStore((s) => s.resultsScrollTop)
-  const openPhoto = useFlowStore((s) => s.openPhoto)
   const notFound = useFlowStore((s) => s.notFound)
   const startOver = useFlowStore((s) => s.startOver)
   const loopBusy = useFlowStore((s) => s.loopBusy)
-  const scrollRef = useRef<HTMLDivElement>(null)
-
-  useLayoutEffect(() => {
-    if (hidden) return
-    const el = scrollRef.current
-    if (!el) return
-    el.scrollTop = resultsScrollTop
-  }, [hidden, resultsScrollTop, candidates.length])
 
   const count = candidates.length
   const emptyBaseline = count === 0 && (baselineCount ?? 0) === 0
@@ -78,10 +62,7 @@ export function ResultsGrid({ hidden = false }: ResultsGridProps) {
   }
 
   return (
-    <div
-      className={`flex min-h-0 flex-1 flex-col ${hidden ? 'pointer-events-none invisible absolute inset-0 -z-10 overflow-hidden' : ''}`}
-      aria-hidden={hidden}
-    >
+    <div className="flex min-h-0 flex-1 flex-col">
       <TopBar title={query} />
       <div className="px-4 pb-2">
         <h2 className="text-lg text-gp-text">
@@ -91,32 +72,25 @@ export function ResultsGrid({ hidden = false }: ResultsGridProps) {
       <ComparisonChip />
       <ProfilePills mode="results" />
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="grid grid-cols-3 gap-0.5 px-0.5 pb-24">
           {candidates.map((photo) => (
-            <button
-              key={photo.id}
-              type="button"
-              onClick={() => {
-                const scrollTop = scrollRef.current?.scrollTop ?? 0
-                openPhoto(photo.id, scrollTop)
-              }}
-              className="aspect-square overflow-hidden bg-gp-surface text-left"
-            >
+            <div key={photo.id} className="aspect-square overflow-hidden bg-gp-surface">
               <PhotoCard photo={photo} variant="grid" className="h-full w-full" />
-            </button>
+            </div>
           ))}
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-gp-border/60 bg-gp-bg px-4 py-3">
+      <div className="shrink-0 border-t border-gp-border bg-gp-bg px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <button
           type="button"
           disabled={loopBusy}
+          data-testid="not-found-photo"
           onClick={() => void notFound()}
-          className="w-full rounded-full py-3 text-sm text-gp-text-secondary disabled:opacity-50"
+          className="w-full rounded-full border border-gp-border bg-gp-surface-elevated py-3.5 text-base font-medium text-gp-text shadow-sm ring-1 ring-gp-border/80 transition-opacity disabled:opacity-50"
         >
-          I did not find the photo
+          {loopBusy ? 'Loading…' : 'I did not find the photo'}
         </button>
       </div>
     </div>

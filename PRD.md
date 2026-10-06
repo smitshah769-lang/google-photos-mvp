@@ -12,9 +12,11 @@
 
 **Prototype goal:** Demonstrate the end-to-end flow (query → classification → guided questions → results → "didn't find it" loop-back) on a mocked photo library, for a product portfolio / usability test.
 
-**LLM usage:** An LLM is used for (a) classifying the query, (b) generating the qualifying (clarifying) questions and their options, and (c) interpreting typed answers. The photo library is a mocked dataset: **~400 Unsplash-backed photos plus ~30 synthetic document entries** (430 total, see 8.4). Images are downloaded at **build time** via the Unsplash API; **search metadata** (dates, locations, tags, demo clusters) is deterministic and authored in the library builder—not inferred from pixels at runtime. Filtering/search over the library is deterministic code.
+**LLM usage:** An LLM is used for (a) classifying the query, (b) generating the qualifying (clarifying) questions and their options, and (c) interpreting typed answers. The photo library is a mocked dataset: **~400 Unsplash-backed photos plus ~30 synthetic document entries** (430 total, see 8.4). Images are downloaded at **build time** via the Unsplash API; **search metadata** (dates, locations, tags, demo clusters) is deterministic and authored in the library builder—not inferred from pixels at runtime. **Clarifier filtering** over that metadata is deterministic code.
 
-**Out of scope:** Real Google Photos integration, real image understanding, authentication, a production backend. The photo library is mocked client-side; the only server piece is a thin proxy that holds the LLM API key (see 6.6).
+**Semantic retrieval (optional, shipped):** At query submit, the app builds an initial **search pool** by unioning (1) a tag/synonym **`semanticBaseline`** match and (2) **vector similarity** over precomputed embeddings (`public/photo-embeddings.json`, built via `npm run build:embeddings`). Runtime query vectors use `POST /api/embed` (Google Gemini or Groq, see 6.7). If embeddings are unavailable, the pool falls back to the tag baseline only. MCQs and the intent profile always run **on the pool**, not necessarily the full 430-row library.
+
+**Out of scope:** Real Google Photos integration, on-device vision over the user’s library, authentication, a production backend. The photo library is mocked client-side; server pieces are thin proxies for the LLM and query embeddings (see 6.6–6.7).
 
 ---
 
@@ -73,11 +75,12 @@ Implement exactly this flow.
 1. User taps "Ask Photos"
 2. User taps **"Can't remember the photo clearly"** (top-right chip on Ask Photos home)      <- entry point for the Intent Clarifier
 3. User enters a search query **in the same home search bar** (placeholder becomes “Describe what you remember”; no separate query screen)
-4. QUERY CLASSIFIER assigns one of four classes:
+4. QUERY CLASSIFIER assigns one of four classes (LLM Call 1):
      A. People only
      B. Non-people only
      C. Both people & non-people
      D. Text only
+4b. **Initial search pool** — union of tag baseline + optional embedding top-K (see 6.4.1). Apply Call 1 **extracted** attributes on this pool. If the pool is empty → empty results (no clarifier). If candidates are already ≤ **`EARLY_STOP_AT`** → skip to results (step 12).
 5. FIRST-LEVEL FILTERING (questions depend on class, see 6.1)
      - Skip any question already answered in the user's query (jump ahead)
      - Every question has a "Can't remember" option
@@ -88,10 +91,10 @@ Implement exactly this flow.
 9. THIRD-LEVEL contextual filtering (ONLY if major data gaps remain)
 10. Final search intent profile is created
 11. Search photo library using the search intent profile
-12. Results display
-13a. User finds the desired photo  -> END (success)
-13b. User does not find it -> taps "I did not find the photo"
-        -> LOOP BACK to step 8 (second-level contextual filtering, with new/different questions)
+12. Results display (3-column grid; success = user identifies the photo in the grid — **no** dedicated viewer or success screen)
+13b. User does not find it -> taps **"I did not find the photo"** (results bar, or clarifier when > 12 matches)
+        -> **LOOPBACK** (banner: "Let's narrow it down differently.") → new contextual round (level 2 or 3, may relax filters) — not always strictly step 8
+13c. After **`LOOP_LIMIT`** completed loop-back rounds, the **next** "I did not find the photo" → **Fallback** (Start over; Browse by Places is non-functional)
 ```
 
 ### Flow diagram (Mermaid, for reference)
@@ -101,10 +104,13 @@ flowchart TD
   A[Tap Ask Photos] --> B[Tap: Can't remember the photo clearly]
   B --> C[Enter search query]
   C --> D{Query classifier}
-  D -->|People only| P1[Timeline / Location / Type of Photo]
-  D -->|Non-people only| N1[Timeline / Location / Object]
-  D -->|Both| M1[Timeline / Location / Object / Type of Photo]
-  D -->|Text only| T1[Type of document / Timeline]
+  D --> POOL[Build pool: tags union embeddings]
+  POOL -->|Empty| EMPTY[Empty state / Start over]
+  POOL --> D2{Class}
+  D2 -->|People only| P1[Timeline / Location / Type of Photo]
+  D2 -->|Non-people only| N1[Timeline / Location / Object]
+  D2 -->|Both| M1[Timeline / Location / Object / Type of Photo]
+  D2 -->|Text only| T1[Type of document / Timeline]
   P1 & N1 & M1 & T1 --> E[Initial search intent profile]
   E --> F[Prioritise high-value gaps]
   F --> G[Second-level contextual filtering]
@@ -112,9 +118,10 @@ flowchart TD
   H --> I[Final search intent profile]
   I --> J[Search library by profile]
   J --> K[Results display]
-  K -->|Found| L[Done]
+  K -->|Found in grid| L[Done]
   K -->|Not found| M[Tap: I did not find the photo]
   M -->|Loop back| G
+  M -->|After LOOP_LIMIT| FB[Fallback / Start over]
 ```
 
 ---
@@ -136,7 +143,7 @@ flowchart TD
 - **FR-3:** Question **rounds** show up to **three stacked questions** on one screen (Mockups/screens.html S3). Each question is **single-select** among chips; tap a selected chip again to clear it. Options that would leave **zero** photos are **dimmed**. A primary button at the bottom shows the live match count (e.g. **“Show 6 photos”**) and **submits the whole round**; there is no per-question Next button. **Skip** in the top bar goes straight to results.
 - **FR-3a (Add detail, when needed):** Each question has a **“✎ Add detail”** chip. Tapping it opens a text field under that question only. Submitting typed text calls the LLM interpreter (6.6, Call 3), which maps the text mainly for that question but may fill others (e.g. “the island, with lily pads” selects Vancouver Island and Lily pads). Show a one-line confirmation under the field. Typed values join the **round draft** until the user submits the round. If text can't be mapped, follow the keyword path (FR-3a legacy) with the confirmation sheet (E-5.4).
 - **FR-4:** **Timeline** options: Last week, Last month, Last 3 months, This year, Last year, Older, Pick a year. The crawl window extends to the year before and after any selected year. Show a subtle helper line: "Also checking 2024 and 2026".
-- **FR-5:** **Location** options are drawn from locations in the mock library, ranked by frequency within the current candidate set. Show the top 4, plus "Somewhere else" (opens the typed-answer field, FR-3a) and "Can't remember".
+- **FR-5:** **Location** options are drawn from locations in the mock library, ranked by frequency within the current candidate set. Show the top **`LOCATION_OPTION_CAP`** (default **3**), plus **✎ Add detail** (typed field, FR-3a) and "Can't remember". Other attributes show up to **`CHIP_OPTIONS_PER_QUESTION`** (default **3**) MCQ chips plus Add detail and Can't remember.
 - **FR-6:** **Object** options come from the candidate set's object tags (e.g. Water, Mountains, Boat, Tent, Food, Sunset).
 - **FR-7:** **Type of Photo:** Selfie, Portrait, Group photo, Candid.
 - **FR-8:** **Type of document:** Receipt, ID / Card, Ticket, Handwritten note, Screenshot, Slides / Whiteboard.
@@ -153,8 +160,8 @@ flowchart TD
 - **FR-9 (Prioritise high-value gaps):** After each answer, recompute the candidate set. The next question is chosen by the LLM (6.6, Call 2) from the attributes valid for the query class and not yet answered. The prototype computes an entropy score per attribute (how evenly its values split the candidate set) and passes it to the LLM as a hint; the LLM picks the attribute that is most useful and most natural to ask. If the LLM call fails, use the highest-entropy attribute directly (see 8.3).
 - **FR-10 (Early stop):** Stop asking and go to search as soon as candidate set ≤ **`EARLY_STOP_AT`** (default **12**) photos. **Contextual rounds** (level 2+, including loop-back) stop after **three questions have been shown** across the round UI (one screen may show up to three at once). The user can also tap **Skip** or the bottom **Show N photos** button when ready.
 - **FR-11 (Third level gate):** Enter third-level only if, after second level, the candidate set is still > **`THIRD_LEVEL_ABOVE`** (default **30**) photos. Keep both constants in `src/config.ts`.
-- **FR-12 (Loop-back):** Tapping "I did not find the photo" returns to second-level filtering. Exclude already-answered attributes, **re-weight toward attributes not yet used**, and relax the previous strictest filter if results were 0 or very few (< 3). Show copy: "Let's narrow it down differently."
-- **FR-13 (Loop limit):** After 2 loop-backs, show a fallback card: "Still not found? Browse by Places" (non-functional link) and "Start over".
+- **FR-12 (Loop-back):** Tapping "I did not find the photo" (from results, or from the clarifier when the match count is still > 12) enters **`LOOPBACK`**: exclude already-answered attributes (Can't remember may be re-asked once), pick the next contextual level (2 or 3), and **relax** the most restrictive prior filter when results were &lt; **`FEW_RESULTS`** (default 3). Show copy: "Let's narrow it down differently."
+- **FR-13 (Loop limit):** **`LOOP_LIMIT`** (default **1**) is the number of **completed loop-back rounds** allowed. On the **next** "I did not find the photo" after that, show **`FallbackScreen`**: "Still not found?", non-functional **Browse by Places**, and **Start over**. (Equivalently: one loop-back cycle, then fallback on the second not-found tap.)
 
 ### 6.3 Search intent profile
 
@@ -165,11 +172,17 @@ A visible, human-readable summary pill row, updated live: `Lake · Last week · 
 
 ### 6.4 Results display
 
-- 3-column photo grid, with a header showing the count ("2 photos match") and the profile pills. Render the 30 real photos from `public/photos`. Generated entries (no image file) render as a **gradient card** using their `placeholder` colours with the emoji centred, plus a small caption from `alt`. Document entries render as a paper-style card showing the `docType` label and a few grey text-line bars. Real photos are visually distinct from placeholders, so make sure the target photo in the demo is a real one.
+- Brief **`SEARCHING`** state ("Searching your library…") immediately before the grid (same loading pattern as classify).
+- 3-column photo grid, with a header showing the count ("2 photos match") and **profile pills** (`ProfilePills`). Render real JPEGs from `public/photos` where `src` is set. Generated entries (no image file) render as a **gradient card** using their `placeholder` colours with the emoji centred. Document entries render as a paper-style card showing the `docType` label and grey text-line bars.
 - Sort: best match first (score by number of matched attributes, then recency).
-- Tapping a photo opens a simple full-screen viewer with two buttons: **"This is it"** (success state, confetti or a tick) and back.
+- **Success** is finding the target in the grid; there is **no** in-prototype full-screen viewer or confetti success screen (`PhotoViewer` / `SuccessScreen` were removed).
 - Persistent bottom bar button: **"I did not find the photo"** (triggers FR-12).
-- Show a **before/after comparison chip**: "Without clarifier: 73 results → With clarifier: 6 results". This is the key demo moment. The **"without clarifier" count** is computed by a `semanticBaseline(query)` function: a loose match of the raw query against `objects`, `animals`, `alt` and a small synonym map (e.g. lake → water, sea, harbour, waves, sun over water). It simulates what current AI Search would return for the bare query.
+- Show a **before/after comparison line** when clarifier count ≤ baseline: "Without clarifier: 73 → With clarifier: 6". If the final count exceeds the baseline (e.g. after keywords), show only "N results". The **"without clarifier" count** is **`semanticBaseline(query)` only** (tag/synonym match), **not** the embedding-augmented pool size — so the chip still measures clarifier value over bare-query tag search.
+
+### 6.4.1 Initial search pool (embeddings)
+
+- **`resolveSearchPool(query, library)`** (client): load `public/photo-embeddings.json`; `POST /api/embed` for a normalized query vector; rank by cosine similarity (`EMBED_TOP_K`, `EMBED_MIN_SCORE`); union with `semanticBaseline(query)`; cap at **`EMBED_POOL_CAP`**. Store result in `flowStore.pool`. All MCQs, stats, and filters use **`pool`** as the library slice (with a **tight-baseline demo exception**: when tag baseline ≤ `FEW_RESULTS` and candidates are tiny, the store may widen to the full library so path A still has questions — large embedding pools are **not** widened).
+- Build-time: **`npm run build:embeddings`** embeds each row’s search text (`photoSearchText`) into `photo-embeddings.json`. Commit the JSON for static hosting; set **`GEMINI_API_KEY`** (or Groq embed key) on the server for runtime query embeds.
 
 ### 6.5 Query classification (LLM)
 
@@ -183,7 +196,7 @@ The query is classified by an LLM call (Call 1 in 6.6). It returns the class and
 | `text` | Text / document only | "hotel receipt", "passport", "notes", "invoice", "slides" |
 
 - The debug drawer has a **"Force class"** dropdown that overrides the LLM result, so the demo can always reach any of the four paths.
-- **Fallback:** if the LLM call fails or times out (> 4 s), use a small keyword-based classifier (people words, place/object words, document words), defaulting to `nonPeople`. Log the fallback in the debug drawer.
+- **Fallback:** if the LLM call fails or times out (see **`CALL1_TIMEOUT_MS`**, default **20 s** in `config.ts`), use a small keyword-based classifier (people words, place/object words, document words), defaulting to `nonPeople`. Log the fallback in the debug drawer.
 
 ### 6.6 LLM integration
 
@@ -244,6 +257,14 @@ The query is classified by an LLM call (Call 1 in 6.6). It returns the class and
 
 **Failure handling:** On any LLM failure, use the rule-based classifier (6.5) and template questions from `data/questions.ts` with options from `attributeStats`. The prototype must remain fully usable without an API key (a "Mock mode" env flag `VITE_USE_MOCK_LLM=true`).
 
+### 6.7 Embedding API (optional retrieval)
+
+**Architecture:** Same proxy pattern as the LLM. **`POST /api/embed`** with `{ query }` returns `{ ok, vector }`. Keys: **`GEMINI_API_KEY`** + `EMBED_PROVIDER=google` (recommended with Groq chat), or Groq via `LLM_API_KEY`. Never expose embed keys as `VITE_*`.
+
+**Build:** `scripts/build_embeddings.ts` → `public/photo-embeddings.json` (photo ids, dimensions, vectors). Re-run when `photos.ts` changes.
+
+**Degraded:** Missing index or failed query embed → pool = tag baseline only; no user-facing error required.
+
 ---
 
 ## 7. Screens and UI Spec
@@ -254,13 +275,15 @@ Design language: **Google Photos mobile, dark theme**. Render inside a centred p
 |---|---|---|
 | S1 | **Ask Photos home** | Reference-style home: back, people/pets row, recents, suggested questions, bottom **Search or ask** bar. **"Can't remember the photo clearly"** is a quiet outlined chip **top right**; when selected, the bar placeholder becomes “Describe what you remember” and the query is submitted from that bar (**no separate query screen**). |
 | S2 | **Classifying** | Shimmer while LLM Call 1 runs: "Understanding what you're looking for…". After **3 s**, show “Taking longer than usual…”. Nothing tappable (E-2.12: up to **6 s** before fallback). |
-| S3 | **Question round** | Up to **three** stacked questions; chips (selected / dimmed / **✎ Add detail** / dashed **Can't remember**); bottom **Show N photos**; **Skip** → results. Plain layout—no cards, progress dots, or profile row on this screen. Skeleton while the next round loads. |
-| S4 | **Results grid** | See 6.4 |
-| S5 | **Photo viewer** | Full-screen image, "This is it" CTA |
-| S6 | **Success** | Short confirmation, summary: "Found in 2 taps: 6 results instead of 73" |
-| S7 | **Loop-back** | One plain line (e.g. filter relaxed) then a new S3 round |
-| S8 | **Fallback** | After 2 loops (FR-13) |
-| Debug | **Debug drawer (toggle)** | Docks beside the phone on desktop; class, answers, candidate history, latency/fallbacks, force class, mock mode, Reset |
+| S3 | **Question round** (`ClarifierCard`) | Up to **three** stacked questions; up to **3** MCQ chips each (+ **✎ Add detail** + **Can't remember**); dimmed chips that would zero the set; bottom **Continue** (L1) or **Show N photos** (L2+); optional **I did not find the photo** when N &gt; 12; **Skip** → results. No profile pills on this screen. Skeleton overlay while the next round loads. |
+| S4 | **Searching** | Same shimmer component as classify: "Searching your library…" (instant in practice). |
+| S5 | **Results grid** | See 6.4 |
+| S6 | **Loop-back** | Banner line via `LoopBackCard`, then another S3 round (`LOOPBACK` stage). |
+| S7 | **Fallback** | After loop limit (FR-13). |
+| S8 | **Empty results** | No tag or embed pool match; Start over (+ disabled Browse by Places). |
+| Debug | **Debug drawer (toggle)** | Docks beside the phone on desktop; stage, pool size, class, profile, candidate history, loop-backs, latency/fallbacks, force class, mock mode, Reset |
+
+**Removed from shipped UI (do not rebuild):** separate query screen (`QueryInput` exists but is unused), **`PhotoViewer`**, **`SuccessScreen`**.
 
 **Interaction polish:** 150–200 ms transitions where used; chips 40 px tall; primary bar/button 52–60 px fully rounded; dark theme tokens per Mockups/screens.html §15.
 
@@ -273,8 +296,9 @@ Design language: **Google Photos mobile, dark theme**. Render inside a centred p
 - **Tailwind CSS**
 - **Zustand** (or `useReducer`) for flow state
 - **Framer Motion** for transitions (optional)
-- **Thin proxy** (Express or Vite middleware) for LLM calls, with the LLM API key in `.env` (6.6). Photo data is local in `src/data/photos.ts` (built once from Unsplash + synthetic docs).
+- **Thin proxy** (Vite middleware in dev, `server/index.ts` for `npm run serve`) for **`POST /api/llm`** and **`POST /api/embed`**, with keys in `.env` (6.6–6.7). Photo data is local in `src/data/photos.ts` (built once from Unsplash + synthetic docs).
 - **Library build script** (`npm run build:library`): reads `UNSPLASH_ACCESS_KEY` from `.env` (build-time only, never exposed to the browser). See 8.4.
+- **Embeddings build** (`npm run build:embeddings`): writes `public/photo-embeddings.json`. See 6.4.1.
 - **Zod** for validating LLM JSON.
 
 ### 8.2 Suggested structure
@@ -283,33 +307,46 @@ src/
   App.tsx
   data/
     photos.ts            # mock library: 430 entries (see 8.4); output of build:library or prototype-assets.zip
-  config.ts              # EARLY_STOP_AT (12), THIRD_LEVEL_ABOVE (30)
-    questions.ts         # question definitions per class and level
+  config.ts              # EARLY_STOP_AT, THIRD_LEVEL_ABOVE, embed + timeout constants
+  data/
+    questions.ts         # template questions for fallback
   lib/
-    llmClient.ts         # frontend wrapper for /api/llm (classify, nextQuestion, interpretTyped)
-    fallbackClassifier.ts# rule-based classifier used on LLM failure / mock mode
-    schemas.ts           # Zod schemas for LLM outputs
-    filterEngine.ts      # applies intent profile to photos, returns candidates and scores
-    attributeStats.ts    # value counts + entropy per attribute for the current candidates
-    questionPicker.ts    # entropy-based fallback for FR-9
-server/
-  index.ts               # proxy: POST /api/llm
-  llm.ts                 # provider call (swap model/provider here)
-  prompts.ts             # system prompts for the 3 calls
+    llmClient.ts         # /api/llm (classify, nextQuestion, interpretTyped)
+    fallbackClassifier.ts
+    schemas.ts
+    filterEngine.ts
+    attributeStats.ts
+    questionPicker.ts
+    semanticBaseline.ts
+    embeddingSearch.ts   # resolveSearchPool, index load
+    embeddingIndex.ts
+    embeddingsMath.ts
+    photoSearchText.ts   # text embedded at build time
   state/
     flowStore.ts         # state machine (see 8.5)
   components/
     PhoneFrame.tsx
-    AskPhotosHome.tsx
-    QueryInput.tsx
+    AskPhotosHome.tsx      # query on home bar (no separate query screen)
     ClarifierCard.tsx
-    TypedAnswerInput.tsx  # "Type your own" row (FR-3a)
+    TypedAnswerInput.tsx
     ProfilePills.tsx
     ResultsGrid.tsx
-    PhotoViewer.tsx
-    SuccessScreen.tsx
+    PhotoCard.tsx
     LoopBackCard.tsx
+    FallbackScreen.tsx
+    ClassifyingScreen.tsx
     DebugDrawer.tsx
+server/
+  index.ts               # static + POST /api/llm + POST /api/embed
+  handler.ts / llm.ts
+  embedHandler.ts
+  embeddingProvider.ts
+  prompts.ts
+scripts/
+  build_library.ts
+  build_embeddings.ts
+public/
+  photo-embeddings.json  # committed for demos
 ```
 
 ### 8.3 Question selection (LLM-led, with deterministic fallback)
@@ -472,17 +509,22 @@ When using **`prototype-assets.zip`** instead of Unsplash, the deck below applie
 Counts are illustrative. Compute them at runtime from the data.
 
 ### 8.5 Flow state machine
-States: `HOME → QUERY → CLASSIFYING → LEVEL1 → LEVEL2 → LEVEL3 → SEARCHING → RESULTS → (SUCCESS | LOOPBACK → LEVEL2) → FALLBACK`
+Stages: `HOME → CLASSIFYING → LEVEL1 | LEVEL2 | LEVEL3 | LOOPBACK → SEARCHING → RESULTS → LOOPBACK | FALLBACK`. (`QUERY` exists in types but query entry is on **`HOME`** only.)
 
 ```ts
 type FlowState = {
   stage: Stage;
   query: string;
   queryClass: 'people'|'nonPeople'|'both'|'text';
-  profile: Partial<Record<Attr, string | 'any'>>;  // 'any' = "Can't remember"
+  pool: Photo[];           // search slice (tags union embeddings)
+  profile: Partial<Record<Attr, string | 'any'>>;
+  candidates: Photo[];
+  baselineCount: number | null;  // semanticBaseline only (comparison chip)
   candidateHistory: number[];
   loopCount: number;
-  currentQuestion: Attr | null;
+  level: 1 | 2 | 3;
+  roundQuestions: RoundQuestion[];
+  roundDraft: Partial<Record<Attr, string>>;
 };
 ```
 
@@ -505,7 +547,7 @@ type FlowState = {
 13. Selecting a year in Timeline also includes photos from the year before and after.
 14. Results render real photos from `public/photos`, gradient placeholder cards for generated entries, and paper-style cards for documents, with a "without clarifier N → with clarifier M results" comparison computed from the data.
 15. "I did not find the photo" returns to second-level questions with attributes not previously asked.
-16. After 2 loop-backs, the fallback screen appears.
+16. After **`LOOP_LIMIT`** loop-back round(s), the next "I did not find the photo" shows the fallback screen (default: one loop-back, then fallback on the second not-found).
 17. The debug drawer shows class, profile, and candidate history, and "Reset" restores the home state.
 18. The flow works on a 390 × 844 viewport with no horizontal scroll.
 
@@ -520,13 +562,14 @@ The numbers below come from the shipped `photos.ts`. They should match what the 
 2. Type **"lake"** → LLM classifies as Non-people only. Baseline: ~73 results.
 3. Timeline → **Last week**. Candidates → ~15 (Vancouver Island ×6, Banff ×5, Whistler ×2, plus a couple of others). Still above 12, so keep asking.
 4. Location (top options: Vancouver Island, Banff, Whistler, Vancouver, plus "Somewhere else"). Instead of tapping, type **"the island, with lily pads"**. The LLM maps this to Location = Vancouver Island and Object = lily pads (FR-3a). Candidates → 1.
-5. Results show the real lake photo **p10**. Chip: "Without clarifier: 73 → With clarifier: 1". Tap it → **This is it** → success.
+5. Results show the real lake photo **p10**. Chip: "Without clarifier: 73 → With clarifier: 1". Success = spotting **p10** in the grid.
    (If the user taps **Vancouver Island** instead of typing, 6 results remain, which is under the early-stop limit, and p10 is among them as the only real photo.)
 
 **Path B: loop-back**
 1. Type **"lake"**, Timeline → **Last week** (~15), Location → **Whistler** (a wrong guess; only 2 entries).
-2. Results show 2 photos, neither is p10. Tap **I did not find the photo** → loop-back to second level. Results were < 3, so relax the Location filter (FR-12) and ask **Time of day** → **Morning**.
-3. Results: last-week lake photos taken in the morning (~7), which include p10. User taps p10 → **This is it**.
+2. Results show 2 photos, neither is p10. Tap **I did not find the photo** → loop-back. Results were < 3, so relax the Location filter (FR-12) and ask **Time of day** → **Morning**.
+3. Results: last-week lake photos taken in the morning (~7), which include p10. User confirms **p10** in the grid.
+4. A **second** not-found after one completed loop-back → **Fallback** (FR-13 with `LOOP_LIMIT = 1`).
 
 **Path C: other classes**
 - **"friends"** → People only (Timeline, Location, Type of Photo; then How many people).
@@ -542,10 +585,10 @@ The numbers below come from the shipped `photos.ts`. They should match what the 
 3. Implement `filterEngine.ts`, `attributeStats.ts` and `questionPicker.ts` (deterministic, unit-tested).
 4. Build the LLM proxy (`server/`), the three prompts, Zod schemas and `llmClient.ts`, plus the mock-mode fallback. Test with the four acceptance queries.
 5. Build `flowStore.ts` state machine.
-6. Build screens S1 → S2 → S3 → S4 (including the typed-answer row) → S5 in sequence (get the happy path working first).
-7. Add the loop-back (S8), fallback (S9), photo viewer and success (S6, S7).
-8. Add the debug drawer and the comparison chip.
-9. Polish animations and test against the acceptance criteria.
+6. Build screens S1 → classify → S3 rounds → searching → results (typed **Add detail**, comparison chip).
+7. Add loop-back banner, fallback, empty state; wire **`resolveSearchPool`** and optional **`build:embeddings`**.
+8. Add the debug drawer (stage, pool, embeddings flag when logged).
+9. Polish animations and test against the acceptance criteria (no viewer/success screens).
 
 ---
 

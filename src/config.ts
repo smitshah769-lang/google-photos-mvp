@@ -21,3 +21,11 @@ export const CHIP_OPTIONS_PER_QUESTION = 3
 
 /** Location MCQ: top values by frequency (overflow via Add detail). */
 export const LOCATION_OPTION_CAP = CHIP_OPTIONS_PER_QUESTION
+
+/** Semantic pool: max photos from embedding similarity. */
+export const EMBED_TOP_K = 80
+/** Min cosine similarity (normalized vectors) to include a photo. */
+export const EMBED_MIN_SCORE = 0.35
+/** Hard cap on union(embeddings, tag baseline) pool size. */
+export const EMBED_POOL_CAP = 120
+export const EMBED_QUERY_TIMEOUT_MS = 15_000

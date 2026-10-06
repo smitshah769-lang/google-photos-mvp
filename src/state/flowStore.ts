@@ -11,8 +11,16 @@ import {
 } from '@/config'
 import { photos, type Photo } from '@/data/photos'
 import { resolveQuestionText } from '@/data/questions'
-import type { Attr, ClarifierLevel, QueryClass } from '@/lib/attributes'
-import { allowedAttributes } from '@/lib/attributes'
+import {
+  allClassAttributes,
+  clarifierAttributePool,
+  clarifierLevelForAttribute,
+  coarseAttributePool,
+  loopBackAttributePool,
+  type Attr,
+  type ClarifierLevel,
+  type QueryClass,
+} from '@/lib/attributes'
 import {
   computeValueCounts,
   hasSplittableAttribute,
@@ -39,12 +47,13 @@ import {
 } from '@/lib/llmClient'
 import { normalizeProfileValue } from '@/lib/photoAttributes'
 import {
-  getStatsForAllowed,
   fallbackPickNext,
+  getStatsForPool,
   pickLoopBackLevel,
   type AnsweredMap,
 } from '@/lib/questionPicker'
-import { semanticBaseline } from '@/lib/semanticBaseline'
+import { resolveSearchPool } from '@/lib/embeddingSearch'
+import { semanticBaselineCount } from '@/lib/semanticBaseline'
 import type { ClassifyResponse } from '@/lib/schemas'
 import { candidatesWithDraft, type RoundDraft } from '@/lib/roundPreview'
 import { parseTimelineValue, yearCrawlHelperText } from '@/lib/timeline'
@@ -66,8 +75,6 @@ export type Stage =
   | 'LEVEL3'
   | 'SEARCHING'
   | 'RESULTS'
-  | 'VIEWER'
-  | 'SUCCESS'
   | 'LOOPBACK'
   | 'FALLBACK'
 
@@ -108,7 +115,27 @@ function stageForLevel(level: ClarifierLevel): Stage {
 }
 
 function classAttributes(queryClass: QueryClass): Attr[] {
-  return [1, 2, 3].flatMap((level) => allowedAttributes(queryClass, level as ClarifierLevel))
+  return allClassAttributes(queryClass)
+}
+
+function attributePoolForRound(
+  queryClass: QueryClass,
+  uiLevel: ClarifierLevel,
+  candidateCount: number,
+  loopBack: boolean,
+): Attr[] {
+  const includeLevel3 =
+    loopBack || uiLevel >= 3 || (uiLevel >= 2 && candidateCount > THIRD_LEVEL_ABOVE)
+  return clarifierAttributePool(queryClass, { loopBack, includeLevel3 })
+}
+
+function effectiveLevelForRound(attrs: Attr[], queryClass: QueryClass): ClarifierLevel {
+  let max: ClarifierLevel = 1
+  for (const attr of attrs) {
+    const tier = clarifierLevelForAttribute(queryClass, attr)
+    if (tier > max) max = tier
+  }
+  return max
 }
 
 function isAnimalOnly(candidates: Photo[]): boolean {
@@ -181,14 +208,19 @@ function yearHintFor(profile: IntentProfile): string | null {
   return yearCrawlHelperText(timeline)
 }
 
+function roundAllCantRemember(roundQuestions: RoundQuestion[], roundDraft: RoundDraft): boolean {
+  return (
+    roundQuestions.length > 0 && roundQuestions.every((q) => roundDraft[q.attr] === 'any')
+  )
+}
+
 function canAsk(
   candidates: Photo[],
   attr: Attr,
   answered: AnsweredMap,
-  queryClass: QueryClass,
-  level: ClarifierLevel,
+  pool: Attr[],
 ): boolean {
-  if (!allowedAttributes(queryClass, level).includes(attr)) return false
+  if (!pool.includes(attr)) return false
   if (answered[attr] !== undefined) return false
   if (!hasSplittableAttribute(candidates, attr)) return false
   if (attr === 'peopleCount' && isAnimalOnly(candidates)) return false
@@ -416,13 +448,11 @@ function hasAskable(
   reasked: ReadonlySet<Attr>,
   allowReask: boolean,
 ): boolean {
-  for (const level of [2, 3] as const) {
-    const allowed = allowedAttributes(queryClass, level)
-    if (fallbackPickNext(candidates, answered, allowed, queryClass)) return true
-    if (allowReask) {
-      const opened = withoutReaskable(answered, reasked, new Set())
-      if (fallbackPickNext(candidates, opened, allowed, queryClass)) return true
-    }
+  const pool = loopBackAttributePool(queryClass)
+  if (fallbackPickNext(candidates, answered, pool, queryClass)) return true
+  if (allowReask) {
+    const opened = withoutReaskable(answered, reasked, new Set())
+    if (fallbackPickNext(candidates, opened, pool, queryClass)) return true
   }
   return false
 }
@@ -477,7 +507,6 @@ type Snap = {
   loopBanner: string | null
   lastShownKey: string | null
   askedIdenticalExtra: boolean
-  selectedPhotoId: string | null
   somewhereElse: boolean
   typedPlaceholder: string
 }
@@ -529,15 +558,12 @@ export type FlowState = {
   lastShownKey: string | null
   askedIdenticalExtra: boolean
   loopBanner: string | null
-  selectedPhotoId: string | null
   optionTaps: number
   typedCount: number
   cantRememberCount: number
   submittedAt: number | null
   resultsAt: number | null
   overrideLog: ClassOverride[]
-  /** Results grid scroll position (E-8.7); not part of history snapshots. */
-  resultsScrollTop: number
 }
 
 export type FlowActions = {
@@ -558,9 +584,6 @@ export type FlowActions = {
   forceClass: (queryClass: QueryClass) => Promise<void>
   startOver: () => void
   back: (opts?: { fromPopState?: boolean }) => void
-  openPhoto: (id: string, scrollTop?: number) => void
-  confirmPhoto: () => void
-  closeViewer: () => void
   dismissToast: () => void
   chooseSomewhereElse: () => void
 }
@@ -613,14 +636,12 @@ function blankState(mockMode: boolean): FlowState {
     lastShownKey: null,
     askedIdenticalExtra: false,
     loopBanner: null,
-    selectedPhotoId: null,
     optionTaps: 0,
     typedCount: 0,
     cantRememberCount: 0,
     submittedAt: null,
     resultsAt: null,
     overrideLog: [],
-    resultsScrollTop: 0,
   }
 }
 
@@ -678,7 +699,6 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
         loopBanner: s.loopBanner,
         lastShownKey: s.lastShownKey,
         askedIdenticalExtra: s.askedIdenticalExtra,
-        selectedPhotoId: s.selectedPhotoId,
         somewhereElse: s.somewhereElse,
         typedPlaceholder: s.typedPlaceholder,
       }
@@ -723,7 +743,6 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
         loopBanner: snap.loopBanner,
         lastShownKey: snap.lastShownKey,
         askedIdenticalExtra: snap.askedIdenticalExtra,
-        selectedPhotoId: snap.selectedPhotoId,
         somewhereElse: snap.somewhereElse,
         typedPlaceholder: snap.typedPlaceholder,
         typedDraft: '',
@@ -757,17 +776,11 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
       })
     }
 
-    function hasAskableLevel1(): boolean {
+    function hasAskableCoarsePool(): boolean {
       const s = get()
       if (!s.queryClass) return false
-      return (
-        fallbackPickNext(
-          s.candidates,
-          s.answered,
-          allowedAttributes(s.queryClass, 1),
-          s.queryClass,
-        ) !== null
-      )
+      const pool = coarseAttributePool(s.queryClass)
+      return fallbackPickNext(s.candidates, s.answered, pool, s.queryClass) !== null
     }
 
     async function buildRound(level: ClarifierLevel, allowReask: boolean, gen: number): Promise<RoundQuestion[]> {
@@ -790,16 +803,17 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
       return questions
     }
 
-    async function loadRound(gen: number, allowReask = false) {
+    async function loadRound(gen: number, allowReask = false, probing = false) {
       if (get().requestGeneration !== gen) return
       const loopBack = get().stage === 'LOOPBACK' || get().loopBanner !== null
       const s0 = get()
       const tightBaseline =
         s0.baselineCount !== null && s0.baselineCount <= FEW_RESULTS && s0.baselineCount > 0
-      const forceQuestions = loopBack || tightBaseline || s0.candidates.length <= FEW_RESULTS
+      const forceQuestions = loopBack || tightBaseline || s0.candidates.length <= FEW_RESULTS || probing
 
+      // Widen to full library only for PRD tight-baseline demos — not large semantic pools (lake + embeddings).
       if (
-        forceQuestions &&
+        tightBaseline &&
         s0.candidates.length <= FEW_RESULTS &&
         library.length > FEW_RESULTS
       ) {
@@ -813,12 +827,12 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
       }
 
       let level = get().level
-      if (level === 1 && !hasAskableLevel1()) {
+      if (level === 1 && get().queryClass && !hasAskableCoarsePool()) {
         level = 2
         set({ level: 2 })
       }
 
-      if (level >= 2 && get().questionsThisRound >= QUESTIONS_PER_ROUND) {
+      if (level >= 2 && !probing && get().questionsThisRound >= QUESTIONS_PER_ROUND) {
         finishSearch()
         return
       }
@@ -856,7 +870,10 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
         return
       }
 
-      revealRound(questions, level)
+      const qc = get().queryClass
+      const displayLevel =
+        qc !== null ? effectiveLevelForRound(questions.map((q) => q.attr), qc) : level
+      revealRound(questions, displayLevel)
     }
 
     function finishSearch(force = false) {
@@ -925,23 +942,29 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
       const s = get()
       if (!s.queryClass) return null
       const answered = withBlocked(s.answered, blocked)
-      const allowed = allowedAttributes(s.queryClass, level)
+      const loopBack = s.stage === 'LOOPBACK' || s.loopBanner !== null
+      const pool = attributePoolForRound(
+        s.queryClass,
+        level,
+        s.candidates.length,
+        loopBack,
+      )
 
-      let attr = fallbackPickNext(s.candidates, answered, allowed, s.queryClass)
+      let attr = fallbackPickNext(s.candidates, answered, pool, s.queryClass)
       if (!attr && allowReask) {
         const opened = withoutReaskable(s.answered, s.cantRememberReasked, blocked)
-        attr = fallbackPickNext(s.candidates, opened, allowed, s.queryClass)
+        attr = fallbackPickNext(s.candidates, opened, pool, s.queryClass)
       }
-      if (!attr || !canAsk(s.candidates, attr, answered, s.queryClass, level)) return null
+      if (!attr || !canAsk(s.candidates, attr, answered, pool)) return null
 
-      const loopBack = s.stage === 'LOOPBACK' || s.loopBanner !== null
+      const attrLevel = clarifierLevelForAttribute(s.queryClass, attr)
       const outcome = await nextQuestion({
         queryClass: s.queryClass,
         query: s.query,
         profile: profileRecord(s.profile),
         candidateCount: s.candidates.length,
-        attributeStats: getStatsForAllowed(s.candidates, s.queryClass, level),
-        level,
+        attributeStats: getStatsForPool(s.candidates, pool),
+        level: attrLevel,
         candidates: s.candidates,
         answered,
         forceAttribute: attr,
@@ -959,7 +982,11 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
       }
 
       const llmQuestion = outcome && !outcome.fallback ? outcome.data.question : undefined
-      const question = resolveQuestionText(attr, llmQuestion)
+      const question = resolveQuestionText(attr, llmQuestion, {
+        query: s.query,
+        profileLocation:
+          typeof s.profile.location === 'string' ? s.profile.location : null,
+      })
       const llmOptions =
         outcome && !outcome.fallback ? llmOptionValues(outcome.data.options) : []
       return { attr, question, llmOptions }
@@ -969,9 +996,23 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
       await loadRound(gen, false)
     }
 
-    async function afterRoundSubmit(gen: number, questionsInRound: number) {
+    async function afterRoundSubmit(
+      gen: number,
+      questionsInRound: number,
+      allCantRemember = false,
+      roundAttrs: Attr[] = [],
+    ) {
       if (get().requestGeneration !== gen) return
-      if (get().level >= 2) {
+      if (
+        allCantRemember &&
+        get().level >= 2 &&
+        roundAttrs.length > 0 &&
+        get().queryClass
+      ) {
+        const tier = effectiveLevelForRound(roundAttrs, get().queryClass!)
+        const nextLevel = Math.min(3, tier + 1) as ClarifierLevel
+        if (nextLevel > get().level) set({ level: nextLevel })
+      } else if (get().level >= 2) {
         const nextCount = get().questionsThisRound + questionsInRound
         set({ questionsThisRound: nextCount })
         if (nextCount >= QUESTIONS_PER_ROUND) {
@@ -979,11 +1020,11 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
           return
         }
       }
-      if (get().candidates.length <= EARLY_STOP_AT) {
+      if (!allCantRemember && get().candidates.length <= EARLY_STOP_AT) {
         finishSearch()
         return
       }
-      await loadRound(gen, false)
+      await loadRound(gen, false, allCantRemember)
     }
 
     function noteHistory(count: number) {
@@ -1022,7 +1063,7 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
           yearHint: yearHintFor(profile),
         })
         noteHistory(candidates.length)
-        await afterRoundSubmit(gen, s.roundQuestions.length || 1)
+        await afterRoundSubmit(gen, s.roundQuestions.length || 1, true, attr ? [attr] : [])
         return
       }
 
@@ -1099,7 +1140,8 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
 
         const notes: string[] = []
         if (consumeOfflineToast()) notes.push('Using offline mode')
-        const pool = semanticBaseline(query, library)
+        const baselineCount = semanticBaselineCount(query, library)
+        const { pool } = await resolveSearchPool(query, library)
         const extracted = applyExtracted(outcome.data, pool, pool.length > 0)
         notes.push(...extracted.toasts)
 
@@ -1117,7 +1159,7 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
           unapplied: extracted.unapplied,
           answered: extracted.answered,
           answerOrder: extracted.answerOrder,
-          baselineCount: pool.length,
+          baselineCount,
           candidateHistory: history,
           level: 1,
           questionsThisRound: 0,
@@ -1137,8 +1179,15 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
           return
         }
         const matchCount = extracted.candidates.length
+        const tightBaseline =
+          baselineCount <= FEW_RESULTS && baselineCount > 0
         if (matchCount <= FEW_RESULTS) {
-          if (matchCount > 0 && pool.length <= FEW_RESULTS && library.length > FEW_RESULTS) {
+          if (
+            matchCount > 0 &&
+            tightBaseline &&
+            pool.length <= FEW_RESULTS &&
+            library.length > FEW_RESULTS
+          ) {
             set({ pool: library, candidates: library, keywords: [] })
           }
           await continueAsking(gen)
@@ -1185,12 +1234,13 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
 
       async submitRound() {
         const s = get()
-        if (s.cardLoading || s.pendingKeyword || s.roundQuestions.length === 0) return
+        if (s.pendingKeyword || s.roundQuestions.length === 0) return
         if (s.stage !== 'LEVEL1' && s.stage !== 'LEVEL2' && s.stage !== 'LEVEL3' && s.stage !== 'LOOPBACK') {
           return
         }
         const gen = s.requestGeneration
         const questionsInRound = s.roundQuestions.length
+        const allCantRemember = roundAllCantRemember(s.roundQuestions, s.roundDraft)
         set({
           cardLoading: true,
           loopBanner: null,
@@ -1254,7 +1304,21 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
           yearHint: yearHintFor(profile),
         })
         noteHistory(candidates.length)
-        await afterRoundSubmit(gen, questionsInRound)
+        try {
+          await afterRoundSubmit(
+            gen,
+            questionsInRound,
+            allCantRemember,
+            s.roundQuestions.map((q) => q.attr),
+          )
+        } catch {
+          if (get().requestGeneration === gen) {
+            set({
+              cardLoading: false,
+              toast: 'Could not update results. Try Skip or Reset in Debug.',
+            })
+          }
+        }
       },
 
       answerOption(value: string) {
@@ -1420,7 +1484,20 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
 
       async notFound() {
         const s = get()
-        if (s.loopBusy || s.stage !== 'RESULTS') return
+        if (s.loopBusy) return
+
+        const fromClarifier =
+          s.stage === 'LEVEL1' ||
+          s.stage === 'LEVEL2' ||
+          s.stage === 'LEVEL3' ||
+          s.stage === 'LOOPBACK'
+        if (fromClarifier) {
+          pushSnapshot()
+          finishSearch(true)
+        } else if (s.stage !== 'RESULTS') {
+          return
+        }
+
         const gen = s.requestGeneration
         set({ loopBusy: true, cardLoading: true })
         try {
@@ -1594,27 +1671,6 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
           suppressPop = true
           window.history.back()
         }
-      },
-
-      openPhoto(id: string, scrollTop?: number) {
-        if (get().stage !== 'RESULTS') return
-        if (!get().candidates.some((photo) => photo.id === id)) return
-        pushSnapshot()
-        set({
-          stage: 'VIEWER',
-          selectedPhotoId: id,
-          resultsScrollTop: scrollTop ?? get().resultsScrollTop,
-        })
-      },
-
-      confirmPhoto() {
-        if (get().stage !== 'VIEWER') return
-        set({ stage: 'SUCCESS' })
-      },
-
-      closeViewer() {
-        if (get().stage !== 'VIEWER') return
-        get().back()
       },
 
       dismissToast() {

@@ -473,7 +473,10 @@ export async function nextQuestion(params: NextQuestionParams): Promise<NextQues
       const data: NextQuestionResponse = {
         ...parsed,
         attribute,
-        question: resolveQuestionText(attribute, parsed.question),
+        question: resolveQuestionText(attribute, parsed.question, {
+          query: params.query,
+          profileLocation: params.profile.location ?? null,
+        }),
       }
       questionCache.set(cacheKey, data)
       const log: LlmLogEntry = {

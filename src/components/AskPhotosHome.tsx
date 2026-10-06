@@ -106,7 +106,7 @@ export function AskPhotosHome({
               ))}
             </div>
 
-            <ul className="divide-y divide-gp-border/60 px-2" data-testid="home-recents-list">
+            <ul className="divide-y divide-gp-border px-2" data-testid="home-recents-list">
               {HISTORY.map((item) => (
                 <li key={item}>
                   <button

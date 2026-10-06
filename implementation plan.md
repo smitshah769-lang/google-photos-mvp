@@ -3,7 +3,7 @@
 > **Read before coding:** [`PRD.md`](./PRD.md) (functional spec and build order), [`system architecture.md`](./system%20architecture.md) (modules, state machine, LLM boundary), [`edge cases.md`](./edge%20cases.md) (P0/P1 behaviour).  
 > **This file** is the build sequence. It does not replace those specs. Where they disagree, [§2](#2-locked-decisions) is the rule to implement.
 
-**Current workspace:** Phases 0–8 implemented (polish, Vitest, Playwright, README). The **430-entry library** is produced by **`npm run build:library`** (Unsplash download + deterministic metadata). Do not hand-author hundreds of rows in the app. **`prototype-assets.zip`** remains an optional offline fallback if Unsplash build is skipped. See [`ACCEPTANCE.md`](./ACCEPTANCE.md) for PRD §9 sign-off.
+**Current workspace:** Phases 0–8 **shipped**, plus **semantic embeddings** (`npm run build:embeddings`, `POST /api/embed`, `resolveSearchPool`). UI matches **`Mockups/screens.html`** (home-bar query, round clarifier, results-only success — **no** photo viewer or success screen). The **430-entry library** is produced by **`npm run build:library`**. See [`ACCEPTANCE.md`](./ACCEPTANCE.md) for PRD §9 sign-off.
 
 ---
 
@@ -11,7 +11,7 @@
 
 A clickable dark-theme phone UI (390×844) that runs the flow in PRD §5:
 
-`HOME → QUERY → CLASSIFYING → LEVEL1 → LEVEL2 → LEVEL3 → SEARCHING → RESULTS → SUCCESS | LOOPBACK | FALLBACK`
+`HOME → CLASSIFYING → (pool build + extract) → LEVEL1 → LEVEL2 → LEVEL3 → SEARCHING → RESULTS → LOOPBACK | FALLBACK`
 
 Search over the mock library is deterministic. The LLM only classifies, writes questions, and interprets typed text. The demo works with no API key (`VITE_USE_MOCK_LLM=true`).
 
@@ -20,7 +20,7 @@ Search over the mock library is deterministic. The LLM only classifies, writes q
 - PRD §9 acceptance criteria 1–18 pass.
 - PRD §10 paths A, B, and C complete without facilitator workarounds.
 - Every **P0** row in `edge cases.md` behaves as written. P1 is in scope for the same build; P2 only if it falls out of the same code.
-- `edge cases.md` §13 unit tests exist and pass. Playwright covers paths A–C.
+- `edge cases.md` §14 unit tests exist and pass. Playwright covers paths A–C.
 
 ---
 
@@ -30,8 +30,8 @@ Implement these. Do not reopen them mid-build.
 
 | Topic | Implement this | Sources |
 |---|---|---|
-| Call 1 wait | **6 s.** If the LLM returns within 6 s, use it. After 6 s, use `fallbackClassifier` and **discard** a late Call 1 for that `requestId`. | E-2.12, architecture §7.3, edge §14. PRD §6.5’s 4 s figure is superseded. |
-| Call 2 wait | Skeleton immediately. At **3 s** (or on failure), template question + `fallbackPickNext`. | E-10.12, architecture §7.3 |
+| Call 1 wait | **`CALL1_TIMEOUT_MS` (20 s shipped).** LLM result within timeout wins; after timeout, `fallbackClassifier` and discard late Call 1. | E-2.12, config.ts |
+| Call 2 wait | Overlay skeleton. At **`CALL2_TIMEOUT_MS` (25 s)** or on failure, template + `fallbackPickNext`. | E-10.12, config.ts |
 | Call 3 failure | Raw text becomes a keyword pill. Never block the flow. | E-5.11 |
 | Pet / animal queries | Class **`people`**. Extract into `animals` (and `objects` when useful). Match `animals[]`, `objects`, `alt`. Do not require `hasPeople`. Skip people-count when every candidate is animal-only. | E-2.5, E-2.13, E-11.5, architecture §5. PRD §8.4’s “dog → Non-people” class column is superseded for the clarifier ladder. `semanticBaseline("dog")` stays a loose tag match and can still be ~11. |
 | “me and my dog” | Class **`both`**. Humans use people-count / photo type; the pet matches via `animals`. | E-2.6 |
@@ -57,9 +57,11 @@ Implement these. Do not reopen them mid-build.
 | `EARLY_STOP_AT` | `12` | FR-10, E-7.3, E-7.4 |
 | `THIRD_LEVEL_ABOVE` | `30` | FR-11 |
 | `QUESTIONS_PER_ROUND` | `3` | Contextual round only (§2) |
-| `LOOP_LIMIT` | `2` | FR-13, E-9.5 |
-| `CALL1_TIMEOUT_MS` | `6000` | E-2.12 |
-| `CALL2_TIMEOUT_MS` | `3000` | E-10.12 |
+| `LOOP_LIMIT` | `1` | FR-13: one loop-back round; **second** not-found → fallback (E-9.5) |
+| `CALL1_TIMEOUT_MS` | `20000` | Live Gemini/Groq classify; was 6 s, raised to reduce false fallbacks |
+| `CALL2_TIMEOUT_MS` | `25000` | Large attributeStats payloads |
+| `CHIP_OPTIONS_PER_QUESTION` | `3` | MCQ chips per question (+ Add detail + Can't remember) |
+| `EMBED_TOP_K` / `EMBED_POOL_CAP` | `80` / `120` | Semantic pool (6.4.1) |
 | `MAX_QUERY_CHARS` | `200` | E-1.2, E-5.7 |
 | `MAX_OPTIONS` | `6` | E-4.6; Location uses top **4** + “Somewhere else” (FR-5) |
 | `FEW_RESULTS` | `3` | Relax threshold (FR-12, E-9.1) |
@@ -101,31 +103,39 @@ src/
     attributeStats.ts
     questionPicker.ts
     semanticBaseline.ts
+    embeddingSearch.ts        # resolveSearchPool
+    embeddingIndex.ts
+    embeddingsMath.ts
+    photoSearchText.ts
     timeline.ts               # bucket math, unit-tested with filterEngine
     grounding.ts              # drop options not in attributeStats
   state/
     flowStore.ts
   components/
     PhoneFrame.tsx
-    AskPhotosHome.tsx
-    QueryInput.tsx
+    AskPhotosHome.tsx         # query on home bar (QueryInput.tsx unused)
     ClarifierCard.tsx
+    ClassifyingScreen.tsx
     TypedAnswerInput.tsx
     ProfilePills.tsx
     ResultsGrid.tsx
     PhotoCard.tsx             # real / gradient / document
-    PhotoViewer.tsx
-    SuccessScreen.tsx
     LoopBackCard.tsx
     FallbackScreen.tsx
     DebugDrawer.tsx
     DevLibrary.tsx            # /dev grid, not part of the demo flow
 server/
-  index.ts                    # POST /api/llm only
-  llm.ts
+  index.ts                    # static + POST /api/llm + POST /api/embed
+  handler.ts / llm.ts
+  embedHandler.ts
+  embeddingProvider.ts
+  embedConfig.ts
   prompts.ts
   parse.ts                    # strip fences, first JSON object (E-10.13)
-public/photos/photo-01.jpg … photo-30.jpg
+scripts/
+  build_embeddings.ts
+public/photos/…
+public/photo-embeddings.json
 ```
 
 Stack (PRD §8.1): Vite, React, TypeScript, Tailwind, Zustand, Zod, Framer Motion for the 150–200 ms sheet. Tests: Vitest for `src/lib` and the store; Playwright for paths A–C.
@@ -288,12 +298,12 @@ type FlowState = {
 | Event | Behaviour |
 |---|---|
 | Submit query | Ignore if empty/whitespace (E-1.1) or a classify is in flight (E-1.7). Truncate to 200 (E-1.2). Stage `CLASSIFYING`. |
-| Call 1 result | Apply `extracted` that match the library. Unmatched location/object stays a chip and is not a hard filter (E-3.3). Unmappable timeline is dropped and asked normally (E-3.4). Set baseline candidates and `semanticBaseline` count. 0 baseline → empty results, skip clarifier (E-7.1). ≤ 12 → results (E-7.5). Else first unanswered L1 attribute. |
+| Call 1 result | **`resolveSearchPool`** → `pool`. Apply `extracted` on `pool`. `baselineCount` = `semanticBaselineCount` only. Empty **pool** → empty results, skip clarifier (E-7.1). If candidates ≤ 12 after extract → may still ask when tight-baseline demo widen applies; else early stop (E-7.5). Else load first L1 round (up to 3 questions). |
 | Option tap | One registration; ignore while the next card loads (E-4.1, E-4.3, E-10.8). `'any'` marks answered, count unchanged (E-4.2). Otherwise `applyFilter`; on reject, toast and stay (E-7.2). |
 | Typed submit | Empty disabled (E-5.5). Call 3. Apply `updates` that are allowed and in `knownValues`; drop the rest (E-5.10). Mark every filled attribute answered (E-5.2). Keywords go through the 0-hit confirm (E-5.4). Contradiction overwrites and toasts “Updated {Attribute}” (E-5.6). Chip tap while typing: chip wins, clear the field (E-5.12). |
 | After each answer | Append history. If count ≤ 12 → search (E-7.3). If count is 13, keep asking (E-7.4). If L1 remains, next L1 attribute in fixed order. If L1 is done and count > 12, level 2, LLM pick. After L2, count > 30 → level 3 if budget remains (E-7.8); else search (E-7.9). Contextual questions increment `questionsThisRound`; at 3, search (E-7.7). No legal attribute left → search (E-7.10). |
 | Show results now | Search with current profile; unanswered attributes stay available (E-7.11). |
-| Not found | Debounce to one loop (E-9.6). If `loopCount` is already 2 → fallback (E-9.5). If no unused attribute → fallback early (E-9.4). If results < 3, relax the answered hard filter whose removal grows the set the most; tie-break most recently answered (E-9.1, path B relaxes Location). If results ≥ 3, do not relax (E-9.2). If still zero, drop the last two filters (E-9.3). New round: `questionsThisRound = 0`, stage briefly `LOOPBACK` (“Let’s narrow it down differently.”) then S4. If the new set equals the previous set, ask one more question before showing it again (E-9.8). |
+| Not found | From **results** or **clarifier** (when > 12 matches). Debounce to one loop (E-9.6). If `loopCount >= LOOP_LIMIT` (**1**) → fallback (E-9.5). If no unused attribute → fallback early (E-9.4). If results < 3, relax strictest prior filter (E-9.1). If results ≥ 3, do not relax (E-9.2). Stage **`LOOPBACK`** + `LoopBackCard` banner, then new contextual round. Identical results → one extra question (E-9.8). |
 | Force class | Bump generation, clear profile and history, restart L1 for that class, log override (E-2.11). |
 | Start over / debug Reset | Clear query, profile, history, loop count, pills. Abort in-flight calls. Cache may remain (E-9.10, E-12.5, E-12.10). Return to S1. |
 | Back | In-memory stack + `popstate`. Question → previous question (profile reverts) → query (profile cleared, E-1.8) → home (E-12.2, E-9.9). Refresh always boots at S1 because nothing is stored. |
@@ -308,11 +318,10 @@ Build in order. Wire each screen to the store before starting the next.
 
 | Screen | Build notes | P0 checks |
 |---|---|---|
-| S1 `AskPhotosHome` | Title, suggestion list, chip **Can’t remember the photo clearly** above a disabled or same-route input bar (E-1.9). | Acceptance 1 |
-| S2 `QueryInput` | Placeholders: lake, me at the beach, hotel receipt. Submit disabled when blank. Char counter appears near 200. | E-1.1 |
-| S3 | Shimmer copy: “Understanding what you’re looking for…” | |
-| S4 `ClarifierCard` | Progress, question, ≤ 6 chips, `TypedAnswerInput`, ghost **Can’t remember**, `ProfilePills`, “~N photos match”. Skeleton while Call 2 runs; taps disabled (E-10.8). “Somewhere else” focuses the field with placeholder “Where was it?” (E-4.11). Long labels wrap to two lines inside 390 px (E-4.8). **Show results now** always visible. | E-4.1, E-4.2, FR-3a |
-| S5 `ResultsGrid` | 3 columns, equal cells, header “N photos match”, pills, comparison chip, bottom **I did not find the photo**. Empty copy for E-7.1 includes non-functional **Browse by Places**. | E-8.1, E-8.5 |
+| S1 `AskPhotosHome` | Recents/suggestions; chip **Can’t remember** in top bar; query in bottom bar when chip active (E-1.9). | Acceptance 1 |
+| S2 `ClassifyingScreen` | Shimmer + query bubble; slow hint at 3 s; Call 1 + async pool build. | E-2.12 (20 s timeout) |
+| S3 `ClarifierCard` | Up to 3 questions; ≤ 3 MCQ chips each + **Add detail** + **Can't remember**; **Continue** / **Show N photos**; **Skip**; optional not-found when N > 12. No profile pills. | E-4.1, FR-3a |
+| S4 `ResultsGrid` | Searching flash then grid; pills; comparison chip; **I did not find the photo**. Empty E-7.1. Success in grid only. | E-8.1 |
 
 “Already understood” chips render from `extractedChips` (E-3.1). Removing a chip is P2 (E-3.6, E-8.9); leave the control out until P0 paths pass.
 
@@ -320,16 +329,15 @@ Comparison chip: `Without clarifier: {baseline} → With clarifier: {n}`. If `n 
 
 **Exit:** with mock mode, path A reaches a results grid that contains **p10** after Last week + typed “the island, with lily pads” (the interpreter can be a fixture in mock mode that maps that exact string — see Phase 3 mock fixtures). Acceptance 2, 3, 6, 8, 10, 11.
 
-### Phase 6 — Viewer, success, loop-back, fallback
+### Phase 6 — Loop-back, fallback, embeddings
 
 | Screen | Notes |
 |---|---|
-| S6 `PhotoViewer` | Aspect from `width`/`height` (E-11.2). **This is it** and back. Back restores grid scroll (E-8.7). Placeholder “This is it” uses the same success path (E-8.8). |
-| S7 `SuccessScreen` | “Found in {taps} taps: {n} results instead of {baseline}”. Start over clears loop count and pills (E-12.10). |
-| S8 `LoopBackCard` | Copy from FR-12, then S4. |
-| S9 `FallbackScreen` | After 2 loop-backs: “Still not found? Browse by Places” (dead control) and **Start over** (FR-13). |
+| `LoopBackCard` | Banner on clarifier during `LOOPBACK`. |
+| `FallbackScreen` | After loop limit: Start over + disabled Browse by Places. |
+| Embeddings | `build:embeddings`, `embeddingSearch.test.ts`, pool union at classify. |
 
-**Exit:** path B. Last week + Whistler → 2 results, not p10 → not found → Location relaxed → Time of day Morning → p10 in the morning last-week lake set. Third not-found shows S9 (E-9.5). Acceptance 15, 16.
+**Exit:** path B through p10 in grid; **second** not-found → fallback (E-9.5). Acceptance 15, 16. No viewer/success screens.
 
 ### Phase 7 — Debug drawer and instrumentation
 
@@ -411,7 +419,7 @@ Numbers are whatever `photos.ts` computes. The PRD §10 figures are the sanity c
 1. Can’t remember → “lake” → `nonPeople`, baseline ~73.
 2. Timeline **Last week** → ~15, still above 12.
 3. Type “the island, with lily pads” → pills Vancouver Island and lily pads → 1 result, **p10**.
-4. Chip shows the real baseline → 1. Viewer → This is it.
+4. Chip shows the real baseline → 1; confirm **p10** in the grid.
 
 Alternate: tap Vancouver Island instead of typing → ≤ 12, early stop, p10 is the only real photo in that set.
 
@@ -419,7 +427,7 @@ Alternate: tap Vancouver Island instead of typing → ≤ 12, early stop, p10 is
 
 1. “lake” → Last week → Location **Whistler** (2).
 2. Not found → relax Location → Time of day **Morning** → p10 present.
-3. A third not-found on a fresh run lands on S9.
+3. Second not-found on a fresh run lands on fallback (LOOP_LIMIT = 1).
 
 **C — class ladders**
 
@@ -433,12 +441,12 @@ Alternate: tap Vancouver Island instead of typing → ≤ 12, early stop, p10 is
 
 | Layer | Command / action | Covers |
 |---|---|---|
-| Unit | `vitest` on `timeline`, `filterEngine`, `attributeStats`, `questionPicker`, `semanticBaseline`, `grounding`, `flowStore`, `llmClient` | Edge §13.1–5 |
+| Unit | `vitest` on `timeline`, `filterEngine`, `attributeStats`, `questionPicker`, `semanticBaseline`, `embeddingSearch`, `grounding`, `flowStore`, `llmClient` | Edge §14 |
 | Data | `/dev` plus a test that imports `photos` | 430 ids, 400 Unsplash `src` paths (when built from API), baseline counts |
 | E2E | Playwright, `VITE_USE_MOCK_LLM=true` | Paths A–C, acceptance 18 at 390×844 and at 320 px width |
 | Live (optional) | One pass of path A with a real key | Call 1 within 6 s replaces fallback; debug shows latency |
 
-Browser check before any UI phase is called done: run the flow, do not stop at a screenshot. Confirm S4 taps, typed submit, results → viewer → back (scroll kept), loop-back, and reset.
+Browser check: home query, classify, rounds, results grid, loop-back, fallback, reset. Optional: live embed + Groq/Gemini keys.
 
 ---
 

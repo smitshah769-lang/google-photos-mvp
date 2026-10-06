@@ -26,6 +26,8 @@ Rules:
 - Use profile and query as what is already known. Do not ask about attributes already filled in profile unless a more specific follow-up on the same attribute would clearly narrow candidates.
 - allowedAttributes usually contains one attribute—the app already picked the gap; output that attribute with question + options (do not swap to a different attribute).
 - Wording must fit the user's query and searchIntentProfile, not generic catalog labels.
+- libraryStatistics is for MCQ option values only. Do NOT copy city, country, landmark, or location names from statistics into the question text unless that exact place is in userInput or searchIntentProfile.location.
+- Example: userInput "lake" → "What stood out in your lake photo?" NOT "What stood out at Lake Tuz?" (the user never said Lake Tuz).
 - Question: one short sentence that jogs memory (what stood out, who was there, indoors/outdoors, what you were doing)—not generic jargon.
 - options: 3–6 items; each option.value MUST be an exact value from attributeStats for the chosen attribute. Do not invent values.
 - allowTyping: true. Do not add "Not sure", "Can't remember", or "Type your own" in options—the UI adds those.
@@ -103,7 +105,7 @@ export function buildUserPrompt(req: LlmRequest): string {
             ? 'Output the single allowed attribute with a contextual question and grounded options.'
             : 'Pick one allowed attribute; prefer the one that best splits libraryStatistics.',
           'Options must use only values present in libraryStatistics for that attribute.',
-          'Question must be specific to userInput and searchIntentProfile—not a generic template.',
+          'Question must anchor on userInput words only; never name a specific place from libraryStatistics unless the user already said it.',
         ],
         outputSchema: {
           attribute: 'one of allowedAttributes',

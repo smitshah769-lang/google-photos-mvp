@@ -40,22 +40,35 @@ export function TopBar({
         <span className="flex-1" />
       )}
       {trailing ? (
-        <button
-          type="button"
-          aria-label={trailingLabel}
-          onClick={onTrailingClick}
-          className={
-            trailingStyle === 'link'
-              ? 'touch-target shrink-0 px-2 py-1 text-sm text-gp-accent'
-              : `touch-target mr-1 inline-flex max-w-[min(100%,17rem)] shrink-0 items-center rounded-full border px-2.5 py-1.5 text-left ${
-                  trailingSelected
-                    ? 'border-gp-accent bg-gp-surface-elevated'
-                    : 'border-gp-border'
-                }`
-          }
-        >
-          {trailing}
-        </button>
+        trailingStyle === 'chip' && !trailingSelected ? (
+          <div className="chip-moving-outline mr-1 max-w-[min(100%,17rem)] shrink-0 rounded-full">
+            <button
+              type="button"
+              aria-label={trailingLabel}
+              onClick={onTrailingClick}
+              className="touch-target inline-flex w-full items-center rounded-full border border-transparent bg-gp-surface px-2.5 py-1.5 text-left"
+            >
+              {trailing}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            aria-label={trailingLabel}
+            onClick={onTrailingClick}
+            className={
+              trailingStyle === 'link'
+                ? 'touch-target shrink-0 px-2 py-1 text-sm text-gp-accent'
+                : `touch-target mr-1 inline-flex max-w-[min(100%,17rem)] shrink-0 items-center rounded-full border px-2.5 py-1.5 text-left ${
+                    trailingSelected
+                      ? 'border-gp-accent bg-gp-surface-elevated'
+                      : 'border-gp-border'
+                  }`
+            }
+          >
+            {trailing}
+          </button>
+        )
       ) : null}
     </header>
   )

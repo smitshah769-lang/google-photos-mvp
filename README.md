@@ -26,15 +26,27 @@ Copy [`.env.example`](./.env.example) to `.env`. **`LLM_API_KEY` is server-only*
 
 **OpenAI:** `LLM_PROVIDER=openai`, `LLM_MODEL=gpt-4o-mini`.
 
-**Groq + Qwen 3.8 27B (OpenAI-compatible):**
+**Groq chat + Google embeddings (recommended):** put keys in **`.env` at the project root** (copy from `.env.example`). Never use `VITE_` for secrets.
+
 ```env
+# Chat — Groq
 LLM_PROVIDER=groq
 LLM_BASE_URL=https://api.groq.com/openai/v1
 LLM_MODEL=qwen/qwen3.8-27b
-LLM_API_KEY=your_groq_gsk_key
+LLM_API_KEY=gsk_...
+
+# Embeddings — Google AI Studio (https://aistudio.google.com/apikey)
+EMBED_PROVIDER=google
+GEMINI_API_KEY=AIza...
+EMBED_MODEL=gemini-embedding-001
+EMBED_DIMENSION=768
+
 VITE_USE_MOCK_LLM=false
 ```
-Use the exact model slug from [Groq’s model list](https://console.groq.com/docs/models) (`qwen/qwen3.8-27b`, not `qwen-3.8-27b`). Restart `npm run dev` after any `.env` change.
+
+Then: `npm run build:embeddings` → commit `public/photo-embeddings.json` → `npm run dev`.
+
+Use the exact Qwen slug from [Groq’s model list](https://console.groq.com/docs/models). Restart `npm run dev` after any `.env` change.
 
 **Debug shows `fallback` on every call?** The UI fell back to rule-based classify/templates because the `/api/llm` call failed or exceeded the client timeout. Expand the log row and read **error** (e.g. `Call 2 timeout`, `Gemini HTTP 503`, `Failed to fetch`). After changing `.env`, **restart** `npm run dev`. Live Gemini calls often take **10–20s** for `nextQuestion`; timeouts are set accordingly. If you still see `503`, retry in a minute or switch model (e.g. `gemini-2.0-flash`).
 
@@ -62,14 +74,20 @@ Use the exact model slug from [Groq’s model list](https://console.groq.com/doc
    - In `.env`: `LLM_API_KEY`, `LLM_MODEL=gemini-3.8-flash`, `VITE_USE_MOCK_LLM=false`.
    - Restart `npm run dev`, run path A once. In the debug drawer, Call 1 / 2 / 3 should show **fallback: false** and latency when the model responds within timeout (~6s classify, ~8s questions).
 
-5. **Production-style serve**
+5. **Semantic embeddings (Google Gemini, cached index)**
+   - **`GEMINI_API_KEY`** in `.env` (AI Studio) + **`EMBED_PROVIDER=google`**. Groq **`LLM_API_KEY`** stays for chat only.
+   - One-time (or after `photos.ts` changes): `npm run build:embeddings` → `public/photo-embeddings.json` (~5–8 min on free tier).
+   - Runtime: `POST /api/embed` embeds each query with the same Google model. Tag baseline still powers the **Without clarifier** chip; the search **pool** unions embedding hits with tag matches.
+   - Commit `photo-embeddings.json` for Vercel. Set **`GEMINI_API_KEY`** in Vercel env for query embeds at runtime.
+
+6. **Production-style serve**
    ```bash
    npm run build
    npm run serve
    ```
-   Static app + `/api/llm` on port 4173 (reads `.env`).
+   Static app + `/api/llm` and `/api/embed` on port 4173 (reads `.env`).
 
-6. **Checklist:** [`ACCEPTANCE.md`](./ACCEPTANCE.md) and PRD §10 demo script.
+7. **Checklist:** [`ACCEPTANCE.md`](./ACCEPTANCE.md) and PRD §10 demo script.
 
 Typed answers are sent to the server **only** for Call 3 interpretation. They are **not** logged to the console; full request/response appears in the **debug drawer** only (E-5.9).
 
