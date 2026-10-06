@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useState } from 'react'
 import { DebugDrawer } from '@/components/DebugDrawer'
 import { PHONE_WIDTH } from '@/components/PhoneFrame'
+import { SHOW_DEBUG_PANEL } from '@/config'
 
 /** Side-by-side when viewport fits phone + drawer (E-12.6). */
 const DOCK_BREAKPOINT = PHONE_WIDTH + 400
@@ -33,14 +34,14 @@ export function PrototypeShell({ children }: PrototypeShellProps) {
         }`}
       >
         {children}
-        {dock ? (
+        {SHOW_DEBUG_PANEL && dock ? (
           <aside className="w-[min(100%,380px)] shrink-0" aria-label="Debug panel">
             <DebugDrawer className="sticky top-6 w-full" />
           </aside>
         ) : null}
       </div>
 
-      {!dock ? (
+      {SHOW_DEBUG_PANEL && !dock ? (
         <>
           <button
             type="button"

@@ -4,6 +4,11 @@ import { type ReactNode, useEffect, useState } from 'react'
 export const PHONE_WIDTH = 390
 export const PHONE_HEIGHT = 844
 
+/** Slightly below 1 so the frame + chrome fits common laptop viewports without page scroll. */
+const MAX_FRAME_SCALE = 0.88
+const FRAME_VIEWPORT_PADDING_X = 24
+const FRAME_VIEWPORT_PADDING_Y = 48
+
 type PhoneFrameProps = {
   children?: ReactNode
 }
@@ -13,8 +18,11 @@ export function PhoneFrame({ children }: PhoneFrameProps) {
 
   useEffect(() => {
     const updateScale = () => {
-      const viewportWidth = window.innerWidth
-      setScale(viewportWidth < PHONE_WIDTH ? viewportWidth / PHONE_WIDTH : 1)
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      const scaleW = (vw - FRAME_VIEWPORT_PADDING_X) / PHONE_WIDTH
+      const scaleH = (vh - FRAME_VIEWPORT_PADDING_Y) / PHONE_HEIGHT
+      setScale(Math.min(MAX_FRAME_SCALE, scaleW, scaleH))
     }
 
     updateScale()

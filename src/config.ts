@@ -29,3 +29,7 @@ export const EMBED_MIN_SCORE = 0.35
 /** Hard cap on union(embeddings, tag baseline) pool size. */
 export const EMBED_POOL_CAP = 120
 export const EMBED_QUERY_TIMEOUT_MS = 15_000
+
+/** Debug drawer: on in dev; in production only when VITE_SHOW_DEBUG=true (e.g. facilitator builds). */
+export const SHOW_DEBUG_PANEL =
+  import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG === 'true'
