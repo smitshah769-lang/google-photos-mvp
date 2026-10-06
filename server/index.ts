@@ -67,6 +67,6 @@ const server = http.createServer((req, res) => {
   serveStatic(req, res)
 })
 
-server.listen(PORT, () => {
-  console.log(`Demo server listening on http://localhost:${PORT}`)
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Demo server listening on http://0.0.0.0:${PORT}`)
 })

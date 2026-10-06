@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "start": "tsx server/index.ts",
     "serve": "tsx server/index.ts",
     "build:library": "tsx scripts/build_library.ts",
     "build:embeddings": "tsx scripts/build_embeddings.ts",
@@ -23,7 +24,9 @@
     "react-router-dom": "^7.18.4",
     "tailwindcss": "^4.3.3",
     "zod": "^4.6.5",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.15",
+    "dotenv": "^18.0.5",
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
@@ -31,9 +34,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
-    "dotenv": "^18.0.5",
     "oxlint": "^1.81.0",
-    "tsx": "^4.23.15",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.3"

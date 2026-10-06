@@ -393,7 +393,7 @@ function widenForLoopBack(
     pool: Photo[]
     profile: IntentProfile
     keywords: string[]
-    candidates: Photo[]
+    candidates: ScoredPhoto[]
     answerOrder: Attr[]
     relaxed: Attr[]
     queryClass: QueryClass | null
@@ -404,7 +404,7 @@ function widenForLoopBack(
   pool: Photo[]
   profile: IntentProfile
   keywords: string[]
-  candidates: Photo[]
+  candidates: ScoredPhoto[]
   relaxed: Attr[]
 } {
   let profile = { ...s.profile }
@@ -434,7 +434,7 @@ function widenForLoopBack(
     keywords = []
     candidates = filterPhotos({ library: pool, profile, keywords })
     if (candidates.length < 2) {
-      candidates = library
+      candidates = filterPhotos({ library, profile: {}, keywords: [] })
     }
   }
 
@@ -817,7 +817,11 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
         s0.candidates.length <= FEW_RESULTS &&
         library.length > FEW_RESULTS
       ) {
-        set({ pool: library, candidates: library, keywords: [] })
+        set({
+          pool: library,
+          candidates: filterPhotos({ library, profile: {}, keywords: [] }),
+          keywords: [],
+        })
       }
 
       const s = get()
@@ -1188,7 +1192,11 @@ export function createFlowStore(library: Photo[] = photos): FlowStoreApi {
             pool.length <= FEW_RESULTS &&
             library.length > FEW_RESULTS
           ) {
-            set({ pool: library, candidates: library, keywords: [] })
+            set({
+              pool: library,
+              candidates: filterPhotos({ library, profile: {}, keywords: [] }),
+              keywords: [],
+            })
           }
           await continueAsking(gen)
           return

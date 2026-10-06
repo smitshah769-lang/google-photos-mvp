@@ -1,0 +1,8 @@
+# Node server (static dist + /api/llm + /api/embed), not Vite-only static hosting.
+[build]
+buildCommand = "npm install --include=dev && npm run build"
+
+[deploy]
+startCommand = "npm run serve"
+healthcheckPath = "/"
+healthcheckTimeout = 120

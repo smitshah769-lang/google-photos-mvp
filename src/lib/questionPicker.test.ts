@@ -55,8 +55,8 @@ describe('questionPicker', () => {
 
   it('pickLoopBackLevel skips exhausted L2 and uses L3 (E-9.7)', () => {
     const candidates = [
-      { ...photo('1', 'A', 'morning'), hasPeople: true, peopleCount: 1, pose: 'smiling', setting: 'outdoor' as const },
-      { ...photo('2', 'B', 'night'), hasPeople: true, peopleCount: 2, pose: 'serious', setting: 'indoor' as const },
+      { ...photo('1', 'A', 'morning'), hasPeople: true, peopleCount: 1, pose: 'smiling' as const, setting: 'outdoor' as const },
+      { ...photo('2', 'B', 'night'), hasPeople: true, peopleCount: 2, pose: 'serious' as const, setting: 'indoor' as const },
     ]
     const answered = { peopleCount: 'any' as const, timeOfDay: 'any' as const }
     expect(fallbackPickNext(candidates, answered, ['peopleCount', 'timeOfDay'], 'both')).toBeNull()
